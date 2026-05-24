@@ -1,0 +1,19 @@
+[package]
+name = "starkom-poly"
+version = "1.0.0"
+description = "Algorithms over polynomials used in Starkom (NTT, Lagrange interpolation, etc.)."
+license = "Apache-2.0"
+repository = "https://github.com/libernet-xyz/poly.git"
+readme = "README.md"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+anyhow = "1.0.102"
+ff = "0.13.1"
+starkom-bluesky = { version = "2.0.0", path = "bluesky" }
+
+[dev-dependencies]
+rand_core = { version = "0.6", features = ["getrandom"] }
