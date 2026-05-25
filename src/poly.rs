@@ -209,6 +209,11 @@ impl<F: PrimeField + Ord> Polynomial<F> {
         self.coefficients.len()
     }
 
+    /// Returns the coefficients of the polynomial in ascending degree order.
+    pub fn coefficients(&self) -> &[F] {
+        self.coefficients.as_slice()
+    }
+
     fn degree_bound_of(coefficients: &[F]) -> usize {
         for (i, &coefficient) in coefficients.iter().enumerate().rev() {
             if coefficient != F::ZERO {
@@ -607,12 +612,11 @@ impl<F: PrimeField + Ord + ThreeAdicField> Polynomial<F> {
         values.resize(n, F::ZERO);
         let omega = Self::three_adic_root_of_unity(values.len());
         Self::ifft3(values.as_mut_slice(), omega);
-        if let Some(i) = values.iter().rposition(|value| *value != F::ZERO) {
-            values.truncate(i + 1);
-        }
-        Polynomial {
+        let mut polynomial = Polynomial {
             coefficients: values,
-        }
+        };
+        polynomial.trim();
+        polynomial
     }
 
     /// Recovers the ordered list of values encoded by `encode3`.
@@ -2418,6 +2422,27 @@ mod tests {
     }
 
     #[test]
+    fn test_multiply_values2_round_trip() {
+        let p = Polynomial::with_coefficients(vec![1.into(), 2.into(), 3.into(), 4.into()]);
+        let q = Polynomial::with_coefficients(vec![5.into(), 6.into(), 7.into(), 8.into()]);
+        let lhs = vec![
+            p.evaluate_on_two_adic_domain(0, 4),
+            p.evaluate_on_two_adic_domain(1, 4),
+            p.evaluate_on_two_adic_domain(2, 4),
+            p.evaluate_on_two_adic_domain(3, 4),
+        ];
+        let rhs = vec![
+            q.evaluate_on_two_adic_domain(0, 4),
+            q.evaluate_on_two_adic_domain(1, 4),
+            q.evaluate_on_two_adic_domain(2, 4),
+            q.evaluate_on_two_adic_domain(3, 4),
+        ];
+        let product = p.clone().multiply(q.clone());
+        let result = Polynomial::encode2(Polynomial::multiply_values2(lhs, rhs));
+        assert_eq!(result, product);
+    }
+
+    #[test]
     fn test_multiply_values3_same_constant() {
         let lhs = vec![42.into(), 42.into(), 42.into()];
         let rhs = vec![42.into(), 42.into(), 42.into()];
@@ -2558,5 +2583,24 @@ mod tests {
         let result_pq = Polynomial::multiply_values3(values_p.clone(), values_q.clone());
         let result_qp = Polynomial::multiply_values3(values_q, values_p);
         assert_eq!(result_pq, result_qp);
+    }
+
+    #[test]
+    fn test_multiply_values3_round_trip() {
+        let p = Polynomial::with_coefficients(vec![1.into(), 2.into(), 3.into()]);
+        let q = Polynomial::with_coefficients(vec![4.into(), 5.into(), 6.into()]);
+        let lhs = vec![
+            p.evaluate_on_three_adic_domain(0, 3),
+            p.evaluate_on_three_adic_domain(1, 3),
+            p.evaluate_on_three_adic_domain(2, 3),
+        ];
+        let rhs = vec![
+            q.evaluate_on_three_adic_domain(0, 3),
+            q.evaluate_on_three_adic_domain(1, 3),
+            q.evaluate_on_three_adic_domain(2, 3),
+        ];
+        let product = p.clone().multiply(q.clone());
+        let result = Polynomial::encode3(Polynomial::multiply_values3(lhs, rhs));
+        assert_eq!(result, product);
     }
 }
