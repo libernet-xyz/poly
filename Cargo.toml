@@ -1,6 +1,6 @@
 [package]
 name = "starkom-poly"
-version = "1.0.0"
+version = "1.0.1"
 description = "Algorithms over polynomials used in Starkom (NTT, Lagrange interpolation, etc.)."
 license = "Apache-2.0"
 repository = "https://github.com/libernet-xyz/poly.git"
