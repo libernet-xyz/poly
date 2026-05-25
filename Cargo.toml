@@ -13,7 +13,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 anyhow = "1.0.102"
 ff = "0.13.1"
-starkom-bluesky = { version = "2.0.0", path = "bluesky" }
+starkom-bluesky = { version = "2.1.0", path = "bluesky" }
 
 [dev-dependencies]
 rand_core = { version = "0.6", features = ["getrandom"] }
