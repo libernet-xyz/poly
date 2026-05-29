@@ -1,8 +1,22 @@
 use crate::utils;
 use anyhow::{Context, Result, anyhow};
 use ff::PrimeField;
-use starkom_bluesky::ThreeAdicField;
+use starkom_bluesky::{self as bluesky, ThreeAdicField};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::sync::LazyLock;
+
+/// Builds the Lagrange basis polynomials returned by `Polynomial::lagrange0()`.
+///
+/// Running time: O(N).
+fn make_lagrange0<F: PrimeField + Ord>(n: usize) -> Polynomial<F> {
+    let mut coefficients = vec![F::ZERO; n + 1];
+    coefficients[0] = -F::ONE;
+    coefficients[n] = 1.into();
+    let zero = Polynomial { coefficients };
+    let (quotient, remainder) = zero.horner(1.into());
+    assert_eq!(remainder, F::ZERO);
+    quotient * F::from(n as u64).invert().into_option().unwrap()
+}
 
 /// A polynomial expressed as an array of scalar coefficients in ascending degree order (i.e. the
 /// first coefficient is the constant term).
@@ -734,6 +748,64 @@ impl<F: PrimeField + Ord + ThreeAdicField> Polynomial<F> {
             lhs[i] *= rhs[i];
         }
         lhs
+    }
+}
+
+impl Polynomial<bluesky::Scalar> {
+    /// Returns the Lagrange basis polynomial L0 that activates on the first point of the evaluation
+    /// domain of size `n` and evaluates to 0 over the rest.
+    ///
+    /// In other words:
+    ///
+    ///   L0(1) = 1
+    ///   L0(w^i) = 0 for all i != 0, i < n
+    ///
+    /// where `w` is an n-th root of unity.
+    ///
+    /// REQUIRES: `n` must be a power of 2 less than or equal to 2^(F::S).
+    ///
+    /// These polynomials are used in the PLONK proving scheme running over BlueSky. BlueSky
+    /// supports at most 62 of these but in the current implementation we only cache the first 32.
+    pub fn lagrange0(n: usize) -> &'static Self {
+        assert!(n.is_power_of_two());
+        let k = n.trailing_zeros();
+        assert!(k <= bluesky::Scalar::S);
+        assert!(bluesky::Scalar::S >= 32);
+        static POLYS: [LazyLock<Polynomial<bluesky::Scalar>>; 32] = [
+            LazyLock::new(|| make_lagrange0(1 << 0)),
+            LazyLock::new(|| make_lagrange0(1 << 1)),
+            LazyLock::new(|| make_lagrange0(1 << 2)),
+            LazyLock::new(|| make_lagrange0(1 << 3)),
+            LazyLock::new(|| make_lagrange0(1 << 4)),
+            LazyLock::new(|| make_lagrange0(1 << 5)),
+            LazyLock::new(|| make_lagrange0(1 << 6)),
+            LazyLock::new(|| make_lagrange0(1 << 7)),
+            LazyLock::new(|| make_lagrange0(1 << 8)),
+            LazyLock::new(|| make_lagrange0(1 << 9)),
+            LazyLock::new(|| make_lagrange0(1 << 10)),
+            LazyLock::new(|| make_lagrange0(1 << 11)),
+            LazyLock::new(|| make_lagrange0(1 << 12)),
+            LazyLock::new(|| make_lagrange0(1 << 13)),
+            LazyLock::new(|| make_lagrange0(1 << 14)),
+            LazyLock::new(|| make_lagrange0(1 << 15)),
+            LazyLock::new(|| make_lagrange0(1 << 16)),
+            LazyLock::new(|| make_lagrange0(1 << 17)),
+            LazyLock::new(|| make_lagrange0(1 << 18)),
+            LazyLock::new(|| make_lagrange0(1 << 19)),
+            LazyLock::new(|| make_lagrange0(1 << 20)),
+            LazyLock::new(|| make_lagrange0(1 << 21)),
+            LazyLock::new(|| make_lagrange0(1 << 22)),
+            LazyLock::new(|| make_lagrange0(1 << 23)),
+            LazyLock::new(|| make_lagrange0(1 << 24)),
+            LazyLock::new(|| make_lagrange0(1 << 25)),
+            LazyLock::new(|| make_lagrange0(1 << 26)),
+            LazyLock::new(|| make_lagrange0(1 << 27)),
+            LazyLock::new(|| make_lagrange0(1 << 28)),
+            LazyLock::new(|| make_lagrange0(1 << 29)),
+            LazyLock::new(|| make_lagrange0(1 << 30)),
+            LazyLock::new(|| make_lagrange0(1 << 31)),
+        ];
+        &*POLYS[k as usize]
     }
 }
 
@@ -2602,5 +2674,47 @@ mod tests {
         let product = p.clone().multiply(q.clone());
         let result = Polynomial::encode3(Polynomial::multiply_values3(lhs, rhs));
         assert_eq!(result, product);
+    }
+
+    #[test]
+    fn test_lagrange0_1() {
+        let n = 1;
+        let l0 = Polynomial::lagrange0(n);
+        assert_eq!(l0.evaluate(1.into()), 1.into());
+    }
+
+    #[test]
+    fn test_lagrange0_2() {
+        let n = 2;
+        let omega = Polynomial::domain_element2(1, n);
+        let l0 = Polynomial::lagrange0(n);
+        assert_eq!(l0.evaluate(1.into()), 1.into());
+        assert_eq!(l0.evaluate(omega), 0.into());
+    }
+
+    #[test]
+    fn test_lagrange0_4() {
+        let n = 4;
+        let omega = Polynomial::domain_element2(1, n);
+        let l0 = Polynomial::lagrange0(n);
+        assert_eq!(l0.evaluate(1.into()), 1.into());
+        assert_eq!(l0.evaluate(omega), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([2, 0, 0, 0])), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([3, 0, 0, 0])), 0.into());
+    }
+
+    #[test]
+    fn test_lagrange0_8() {
+        let n = 8;
+        let omega = Polynomial::domain_element2(1, n);
+        let l0 = Polynomial::lagrange0(n);
+        assert_eq!(l0.evaluate(1.into()), 1.into());
+        assert_eq!(l0.evaluate(omega), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([2, 0, 0, 0])), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([3, 0, 0, 0])), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([4, 0, 0, 0])), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([5, 0, 0, 0])), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([6, 0, 0, 0])), 0.into());
+        assert_eq!(l0.evaluate(omega.pow_vartime([7, 0, 0, 0])), 0.into());
     }
 }
