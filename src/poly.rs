@@ -164,7 +164,7 @@ impl<F: PrimeField> Polynomial<F> {
         let k = n.trailing_zeros() as usize;
         assert!(k <= F::S);
         let exponent = 1u64 << (F::S - k);
-        F::ROOT_OF_UNITY.pow_small(exponent)
+        F::ROOT_OF_UNITY.pow_u64(exponent)
     }
 
     /// Interpolates a polynomial that encodes an ordered list of values.
@@ -598,7 +598,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         let k = utils::ilog3(n) as u32;
         assert!(k <= F::T);
         let exponent = 3u64.pow(F::T - k);
-        F::THREE_ADIC_ROOT_OF_UNITY.pow_small(exponent)
+        F::THREE_ADIC_ROOT_OF_UNITY.pow_u64(exponent)
     }
 
     /// Interpolates a polynomial that encodes an ordered list of values.
