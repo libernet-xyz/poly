@@ -1,9 +1,11 @@
 use crate::utils;
 use anyhow::{Context, Result, anyhow};
-use starkom_bluesky::{self as bluesky, ThreeAdicField};
+use starkom_bluesky::ThreeAdicField;
 use starkom_ff::PrimeField;
+use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::sync::LazyLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Builds the Lagrange basis polynomials returned by `Polynomial::lagrange0()`.
 ///
@@ -749,9 +751,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         }
         lhs
     }
-}
 
-impl Polynomial<bluesky::Scalar> {
     /// Returns the Lagrange basis polynomial L0 that activates on the first point of the evaluation
     /// domain of size `n` and evaluates to 0 over the rest.
     ///
@@ -765,47 +765,25 @@ impl Polynomial<bluesky::Scalar> {
     /// REQUIRES: `n` must be a power of 2 less than or equal to 2^(F::S).
     ///
     /// These polynomials are used in the PLONK proving scheme running over BlueSky. BlueSky
-    /// supports at most 62 of these but in the current implementation we only cache the first 32.
+    /// supports at most 62 of these. Computed on first use and cached for the lifetime of the
+    /// program.
     pub fn lagrange0(n: usize) -> &'static Self {
         assert!(n.is_power_of_two());
         let k = n.trailing_zeros() as usize;
-        assert!(k <= bluesky::Scalar::S);
-        assert!(bluesky::Scalar::S >= 32);
-        static POLYS: [LazyLock<Polynomial<bluesky::Scalar>>; 32] = [
-            LazyLock::new(|| make_lagrange0(1 << 0)),
-            LazyLock::new(|| make_lagrange0(1 << 1)),
-            LazyLock::new(|| make_lagrange0(1 << 2)),
-            LazyLock::new(|| make_lagrange0(1 << 3)),
-            LazyLock::new(|| make_lagrange0(1 << 4)),
-            LazyLock::new(|| make_lagrange0(1 << 5)),
-            LazyLock::new(|| make_lagrange0(1 << 6)),
-            LazyLock::new(|| make_lagrange0(1 << 7)),
-            LazyLock::new(|| make_lagrange0(1 << 8)),
-            LazyLock::new(|| make_lagrange0(1 << 9)),
-            LazyLock::new(|| make_lagrange0(1 << 10)),
-            LazyLock::new(|| make_lagrange0(1 << 11)),
-            LazyLock::new(|| make_lagrange0(1 << 12)),
-            LazyLock::new(|| make_lagrange0(1 << 13)),
-            LazyLock::new(|| make_lagrange0(1 << 14)),
-            LazyLock::new(|| make_lagrange0(1 << 15)),
-            LazyLock::new(|| make_lagrange0(1 << 16)),
-            LazyLock::new(|| make_lagrange0(1 << 17)),
-            LazyLock::new(|| make_lagrange0(1 << 18)),
-            LazyLock::new(|| make_lagrange0(1 << 19)),
-            LazyLock::new(|| make_lagrange0(1 << 20)),
-            LazyLock::new(|| make_lagrange0(1 << 21)),
-            LazyLock::new(|| make_lagrange0(1 << 22)),
-            LazyLock::new(|| make_lagrange0(1 << 23)),
-            LazyLock::new(|| make_lagrange0(1 << 24)),
-            LazyLock::new(|| make_lagrange0(1 << 25)),
-            LazyLock::new(|| make_lagrange0(1 << 26)),
-            LazyLock::new(|| make_lagrange0(1 << 27)),
-            LazyLock::new(|| make_lagrange0(1 << 28)),
-            LazyLock::new(|| make_lagrange0(1 << 29)),
-            LazyLock::new(|| make_lagrange0(1 << 30)),
-            LazyLock::new(|| make_lagrange0(1 << 31)),
-        ];
-        &*POLYS[k as usize]
+        assert!(k <= F::S);
+
+        static CACHE: OnceLock<Mutex<BTreeMap<(TypeId, usize), &'static (dyn Any + Send + Sync)>>> =
+            OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+
+        let polynomial = {
+            let mut map = cache.lock().unwrap();
+            *map.entry((TypeId::of::<F>(), k)).or_insert_with(|| {
+                Box::leak(Box::new(make_lagrange0::<F>(1 << k))) as &'static (dyn Any + Send + Sync)
+            })
+        };
+
+        polynomial.downcast_ref::<Polynomial<F>>().unwrap()
     }
 }
 
