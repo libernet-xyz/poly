@@ -1,21 +1,21 @@
 use crate::utils;
 use anyhow::{Context, Result, anyhow};
 use starkom_bluesky::{self as bluesky, ThreeAdicField};
-use starkom_ff::{PrimeField, PrimeField256};
+use starkom_ff::PrimeField;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::LazyLock;
 
 /// Builds the Lagrange basis polynomials returned by `Polynomial::lagrange0()`.
 ///
 /// Running time: O(N).
-fn make_lagrange0<F: PrimeField256>(n: usize) -> Polynomial<F> {
+fn make_lagrange0<F: PrimeField>(n: usize) -> Polynomial<F> {
     let mut coefficients = vec![F::ZERO; n + 1];
     coefficients[0] = -F::ONE;
     coefficients[n] = F::ONE;
     let zero = Polynomial { coefficients };
     let (quotient, remainder) = zero.horner(F::ONE);
     assert_eq!(remainder, F::ZERO);
-    quotient * F::from(n as u64).invert().into_option().unwrap()
+    quotient * F::try_from(n).unwrap().invert().into_option().unwrap()
 }
 
 /// A polynomial expressed as an array of scalar coefficients in ascending degree order (i.e. the
@@ -152,7 +152,7 @@ impl<F: PrimeField> Polynomial<F> {
     /// Running time: O(N*logN).
     fn ifft2(data: &mut [F], omega: F) {
         Self::fft2(data, omega.invert().into_option().unwrap());
-        let n_inv = F::from(data.len() as u64).invert().unwrap();
+        let n_inv = F::try_from(data.len()).unwrap().invert().unwrap();
         for v in data.iter_mut() {
             *v *= n_inv;
         }
@@ -586,7 +586,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     /// Running time: O(N*logN).
     fn ifft3(data: &mut [F], omega: F) {
         Self::fft3(data, omega.invert().into_option().unwrap());
-        let n_inv = F::from(data.len() as u64).invert().unwrap();
+        let n_inv = F::try_from(data.len()).unwrap().invert().unwrap();
         for v in data.iter_mut() {
             *v *= n_inv;
         }
