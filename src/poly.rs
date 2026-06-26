@@ -528,6 +528,21 @@ impl<F: PrimeField> Polynomial<F> {
         Self::fft2(&mut data, omega);
         data
     }
+
+    /// Folding algorithm used in FRI and similar algorithms.
+    ///
+    /// `alpha` is a verifier challenge, typically derived via Fiat-Shamir.
+    pub fn fold2(self, alpha: F) -> Self {
+        let coefficients = self.coefficients();
+        let m = (coefficients.len() + 1) / 2;
+        let new_coefficients = (0..m)
+            .map(|i| {
+                coefficients[2 * i]
+                    + alpha * coefficients.get(2 * i + 1).copied().unwrap_or(F::ZERO)
+            })
+            .collect();
+        Self::with_coefficients(new_coefficients)
+    }
 }
 
 impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
@@ -720,6 +735,23 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         let omega = Self::three_adic_root_of_unity(m);
         Self::fft3(&mut data, omega);
         data
+    }
+
+    /// Folding algorithm used in three-adic FRI and similar algorithms.
+    ///
+    /// `alpha` is a verifier challenge, typically derived via Fiat-Shamir.
+    pub fn fold3(self, alpha: F) -> Self {
+        let coefficients = self.coefficients();
+        let m = (coefficients.len() + 2) / 3;
+        let alpha_square = alpha * alpha;
+        let new_coefficients = (0..m)
+            .map(|i| {
+                coefficients[3 * i]
+                    + alpha * coefficients.get(3 * i + 1).copied().unwrap_or(F::ZERO)
+                    + alpha_square * coefficients.get(3 * i + 2).copied().unwrap_or(F::ZERO)
+            })
+            .collect();
+        Self::with_coefficients(new_coefficients)
     }
 
     /// Multiplies two polynomials defined on the value domain, assuming the provided evaluations
@@ -3130,6 +3162,135 @@ mod tests {
                 p.evaluate_on_three_adic_domain(7, 9),
                 p.evaluate_on_three_adic_domain(8, 9),
             ]
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_zero() {
+        let p = Polynomial::with_coefficients(vec![Scalar::from_const(5)]);
+        assert_eq!(
+            p.clone().fold2(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(5)]
+        );
+        assert_eq!(
+            p.fold2(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(5)]
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_one() {
+        let p = Polynomial::with_coefficients(vec![Scalar::from_const(2), Scalar::from_const(3)]);
+        assert_eq!(
+            p.clone().fold2(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(8)]
+        );
+        assert_eq!(
+            p.fold2(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(11)]
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_two() {
+        let p = Polynomial::with_coefficients(vec![
+            Scalar::from_const(1),
+            Scalar::from_const(2),
+            Scalar::from_const(3),
+        ]);
+        assert_eq!(
+            p.clone().fold2(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(5), Scalar::from_const(3)],
+        );
+        assert_eq!(
+            p.fold2(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(7), Scalar::from_const(3)],
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_three() {
+        let p = Polynomial::with_coefficients(vec![
+            Scalar::from_const(1),
+            Scalar::from_const(2),
+            Scalar::from_const(3),
+            Scalar::from_const(4),
+        ]);
+        assert_eq!(
+            p.clone().fold2(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(5), Scalar::from_const(11)],
+        );
+        assert_eq!(
+            p.fold2(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(7), Scalar::from_const(15)],
+        );
+    }
+
+    #[test]
+    fn test_fold3_degree_zero() {
+        let p = Polynomial::with_coefficients(vec![Scalar::from_const(5)]);
+        assert_eq!(
+            p.clone().fold3(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(5)]
+        );
+        assert_eq!(
+            p.fold3(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(5)]
+        );
+    }
+
+    #[test]
+    fn test_fold3_degree_two() {
+        let p = Polynomial::with_coefficients(vec![
+            Scalar::from_const(1),
+            Scalar::from_const(2),
+            Scalar::from_const(3),
+        ]);
+        assert_eq!(
+            p.clone().fold3(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(17)]
+        );
+        assert_eq!(
+            p.fold3(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(34)]
+        );
+    }
+
+    #[test]
+    fn test_fold3_degree_three() {
+        let p = Polynomial::with_coefficients(vec![
+            Scalar::from_const(1),
+            Scalar::from_const(2),
+            Scalar::from_const(3),
+            Scalar::from_const(4),
+        ]);
+        assert_eq!(
+            p.clone().fold3(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(17), Scalar::from_const(4)],
+        );
+        assert_eq!(
+            p.fold3(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(34), Scalar::from_const(4)],
+        );
+    }
+
+    #[test]
+    fn test_fold3_degree_five() {
+        let p = Polynomial::with_coefficients(vec![
+            Scalar::from_const(1),
+            Scalar::from_const(2),
+            Scalar::from_const(3),
+            Scalar::from_const(4),
+            Scalar::from_const(5),
+            Scalar::from_const(6),
+        ]);
+        assert_eq!(
+            p.clone().fold3(Scalar::from_const(2)).take(),
+            vec![Scalar::from_const(17), Scalar::from_const(38)],
+        );
+        assert_eq!(
+            p.fold3(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(34), Scalar::from_const(73)],
         );
     }
 
