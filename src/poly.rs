@@ -528,6 +528,21 @@ impl<F: PrimeField> Polynomial<F> {
         Self::fft2(&mut data, omega);
         data
     }
+
+    /// Folding algorithm used in FRI and similar algorithms.
+    ///
+    /// `alpha` is a verifier challenge, typically derived via Fiat-Shamir.
+    pub fn fold2(self, alpha: F) -> Self {
+        let coefficients = self.coefficients();
+        let m = (coefficients.len() + 1) / 2;
+        let new_coefficients = (0..m)
+            .map(|j| {
+                coefficients[2 * j]
+                    + alpha * coefficients.get(2 * j + 1).copied().unwrap_or(F::ZERO)
+            })
+            .collect();
+        Self::with_coefficients(new_coefficients)
+    }
 }
 
 impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
@@ -3130,6 +3145,51 @@ mod tests {
                 p.evaluate_on_three_adic_domain(7, 9),
                 p.evaluate_on_three_adic_domain(8, 9),
             ]
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_zero() {
+        let p = Polynomial::with_coefficients(vec![Scalar::from_const(5)]);
+        assert_eq!(
+            p.fold2(Scalar::from_const(3)).take(),
+            vec![Scalar::from_const(5)]
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_one() {
+        let p = Polynomial::with_coefficients(vec![Scalar::from_const(2), Scalar::from_const(3)]);
+        assert_eq!(
+            p.fold2(Scalar::from_const(4)).take(),
+            vec![Scalar::from_const(14)]
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_two() {
+        let p = Polynomial::with_coefficients(vec![
+            Scalar::from_const(1),
+            Scalar::from_const(2),
+            Scalar::from_const(3),
+        ]);
+        assert_eq!(
+            p.fold2(Scalar::from_const(5)).take(),
+            vec![Scalar::from_const(11), Scalar::from_const(3)],
+        );
+    }
+
+    #[test]
+    fn test_fold2_degree_three() {
+        let p = Polynomial::with_coefficients(vec![
+            Scalar::from_const(1),
+            Scalar::from_const(2),
+            Scalar::from_const(3),
+            Scalar::from_const(4),
+        ]);
+        assert_eq!(
+            p.fold2(Scalar::from_const(5)).take(),
+            vec![Scalar::from_const(11), Scalar::from_const(23)],
         );
     }
 
