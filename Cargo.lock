@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "starkom-poly"
-version = "2.1.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "starkom-bluesky",
