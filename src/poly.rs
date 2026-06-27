@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::{Mutex, OnceLock};
 
-/// Builds the Lagrange basis polynomials returned by `Polynomial::lagrange0()`.
+/// Builds the Lagrange basis polynomials returned by [`Polynomial::lagrange0`].
 ///
 /// Running time: O(N).
 fn make_lagrange0<F: PrimeField>(n: usize) -> Polynomial<F> {
@@ -80,8 +80,8 @@ impl<F: PrimeField> Polynomial<F> {
 
     /// Interpolates a polynomial that has the given roots.
     ///
-    /// This algorithm is roughly twice faster than simply calling `interpolate` with 0 as the y
-    /// coordinate of all points.
+    /// This algorithm is roughly twice faster than simply calling [`Self::interpolate`] with 0 as
+    /// the y coordinate of all points.
     ///
     /// NOTE: if the caller's protocol doesn't require a blinding factor it can be set to 1. Do NOT
     /// set it to 0, as that would nullify the whole polynomial.
@@ -172,15 +172,16 @@ impl<F: PrimeField> Polynomial<F> {
     /// Interpolates a polynomial that encodes an ordered list of values.
     ///
     /// The returned polynomial evaluates to the provided values at certain powers of
-    /// `F::ROOT_OF_UNITY`. The exact coordinates can be retrieved by calling `domain_element2` with
-    /// the index of the value to query and the size of the domain (i.e. `values.len()`).
+    /// `F::ROOT_OF_UNITY`. The exact coordinates can be retrieved by calling
+    /// [`Self::domain_element2`] with the index of the value to query and the size of the domain
+    /// (i.e. `values.len()`).
     ///
     /// NOTE: this function is called `encode2` because it uses the two-adic evaluation domain. For
-    /// the three-adic version see `encode3` below.
+    /// the three-adic version see [`Self::encode3`] below.
     ///
-    /// Under the hood we use the two-adic Inverse Fourier Transform algorithm (`ifft2`), which
-    /// requires the size of the list to be a power of two. If that's not the case, this function
-    /// will automatically pad the provided list with zeros.
+    /// Under the hood we use the two-adic Inverse Fourier Transform algorithm ([`Self::ifft2`]),
+    /// which requires the size of the list to be a power of two. If that's not the case, this
+    /// function will automatically pad the provided list with zeros.
     ///
     /// Additionally, the provided list must not exceed the FFT capacity so it's required to have no
     /// more than 2^(F::S) elements.
@@ -200,13 +201,13 @@ impl<F: PrimeField> Polynomial<F> {
         polynomial
     }
 
-    /// Recovers the ordered list of values encoded by `encode2`.
+    /// Recovers the ordered list of values encoded by [`Self::encode2`].
     ///
-    /// This is the inverse of `encode2`: given a polynomial produced by `encode2(values)`, calling
-    /// `decode2` returns a list equal to `values` (possibly padded with trailing zeros to the next
-    /// power of two).
+    /// This is the inverse of [`Self::encode2`]: given a polynomial produced by `encode2(values)`,
+    /// calling `decode2` returns a list equal to `values` (possibly padded with trailing zeros to
+    /// the next power of two).
     ///
-    /// Under the hood we use the two-adic Fast Fourier Transform algorithm (`fft2`). The
+    /// Under the hood we use the two-adic Fast Fourier Transform algorithm ([`Self::fft2`]). The
     /// polynomial's coefficient list is zero-padded to the next power of two before the transform
     /// is applied.
     ///
@@ -251,7 +252,8 @@ impl<F: PrimeField> Polynomial<F> {
 
     /// Removes any trailing null coefficients.
     ///
-    /// After this call, `len()` is guaranteed to reflect the actual degree bound of the polynomial:
+    /// After this call, [`Self::len()`] is guaranteed to reflect the actual degree bound of the
+    /// polynomial:
     ///
     ///   poly.trim();
     ///   assert_eq!(poly.len(), poly.degree_bound());
@@ -323,7 +325,7 @@ impl<F: PrimeField> Polynomial<F> {
         result
     }
 
-    /// Internal implementation of `multiply_many`.
+    /// Internal implementation of [`Self::multiply_many`].
     fn multiply_many_impl(polynomials: &mut [Self]) -> Self {
         match polynomials.len() {
             0 => Polynomial {
@@ -361,7 +363,7 @@ impl<F: PrimeField> Polynomial<F> {
     /// implied evaluation domain is the set of powers of an `n`-th root of unity.
     ///
     /// The returned polynomial is also on the value domain and can be switched to the coefficient
-    /// domain by constructing a `Polynomial` object on it (see `encode2`).
+    /// domain by constructing a [`Polynomial`] object on it (see [`Self::encode2`]).
     pub fn multiply_values2(mut lhs: Vec<F>, mut rhs: Vec<F>) -> Vec<F> {
         let n = lhs.len();
         assert!(n.is_power_of_two());
@@ -451,7 +453,7 @@ impl<F: PrimeField> Polynomial<F> {
     ///
     /// Running time: O(N).
     ///
-    /// NOTE: the returned value is the same as the remainder value returned by the `horner`
+    /// NOTE: the returned value is the same as the remainder value returned by the [`Self::horner`]
     /// algorithm above. Even though the two algorithms have the same asymptotic running time, this
     /// one is faster because it doesn't allocate memory for the quotient polynomial.
     pub fn evaluate(&self, x: F) -> F {
@@ -462,10 +464,27 @@ impl<F: PrimeField> Polynomial<F> {
         y
     }
 
-    /// Returns the X coordinate of the i-th element of a list encoded with `encode2`.
+    /// Converts this polynomial `P(X)` to `P(g*X)`, where `g` is [`F::MULTIPLICATIVE_GENERATOR`].
     ///
-    /// The returned value is suitable for use with `evaluate` to query the original value from the
-    /// encoded list.
+    /// This effectively shifts the evaluation domain and is used in FRI and similar algorithms to
+    /// preserve secrecy of the values at the original locations while querying the polynomial on
+    /// the shifted domain.
+    ///
+    /// Running time: O(N).
+    pub fn shift_domain(self) -> Self {
+        let mut coefficients = self.coefficients;
+        let mut shift_pow = F::ONE;
+        for c in coefficients.iter_mut() {
+            *c *= shift_pow;
+            shift_pow *= F::MULTIPLICATIVE_GENERATOR;
+        }
+        Self { coefficients }
+    }
+
+    /// Returns the X coordinate of the i-th element of a list encoded with [`Self::encode2`].
+    ///
+    /// The returned value is suitable for use with [`Self::evaluate`] to query the original value
+    /// from the encoded list.
     ///
     /// `domain_size` is the length of the original list. It will be rounded up to the next power of
     /// two automatically.
@@ -476,7 +495,8 @@ impl<F: PrimeField> Polynomial<F> {
         omega.pow_small(index)
     }
 
-    /// Returns the X coordinate of the i-th point in the coset LDE domain used by `shifted_lde2`.
+    /// Returns the X coordinate of the i-th point in the coset domain used by
+    /// [`Self::shift_domain`].
     ///
     /// Equivalent to `F::MULTIPLICATIVE_GENERATOR * domain_element2(index, domain_size)`.
     ///
@@ -499,31 +519,21 @@ impl<F: PrimeField> Polynomial<F> {
         self.evaluate(Self::coset_element2(index, domain_size))
     }
 
-    /// Computes a low-degree extension of the polynomial by evaluating it at `m` points on the
-    /// coset `shift * <omega_m>`, where `omega_m` is a primitive `m`-th root of unity and `shift`
-    /// is the multiplicative generator of the field, `F::MULTIPLICATIVE_GENERATOR`. The evaluation
-    /// points are `shift * omega_m^i` for `i = 0..m`.
+    /// Computes a low-degree extension of the polynomial by evaluating it at `m` points, where `m`
+    /// is a power of two strictly larger than the current degree bound.
     ///
-    /// The algorithm shifts the evaluation domain so that the resulting values can be used in
-    /// (DEEP-)FRI without revealing any of the original values. The coset shift is applied by
-    /// multiplying each coefficient `a_k` by `F::MULTIPLICATIVE_GENERATOR^k` before the FFT, which
-    /// is equivalent to substituting `X -> shift * X` in the polynomial.
+    /// The returned vector is an array of `m` evaluations suitable for FRI and similar algorithms.
     ///
-    /// REQUIRES: `m` must be a power of two at least as large as `self.len()`, and no larger than
+    /// REQUIRES: `m` must be a power of two strictly larger than `self.len()`, and no larger than
     /// `2^(F::S)`.
     ///
     /// Running time: O(M*log(M)).
-    pub fn shifted_lde2(self, m: usize) -> Vec<F> {
+    pub fn lde2(self, m: usize) -> Vec<F> {
         assert!(m.is_power_of_two());
         assert!(m.trailing_zeros() as usize <= F::S);
-        assert!(self.coefficients.len() <= m);
+        assert!(self.coefficients.len() < m);
         let mut data = self.coefficients;
         data.resize(m, F::ZERO);
-        let mut shift_pow = F::ONE;
-        for c in data.iter_mut() {
-            *c *= shift_pow;
-            shift_pow *= F::MULTIPLICATIVE_GENERATOR;
-        }
         let omega = Self::two_adic_root_of_unity(m);
         Self::fft2(&mut data, omega);
         data
@@ -622,15 +632,15 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     ///
     /// The returned polynomial evaluates to the provided values at certain powers of the
     /// `F::THREE_ADIC_ROOT_OF_UNITY`. The exact coordinates can be retrieved by calling
-    /// `domain_element3` with the index of the value to query and the size of the domain (i.e.
-    /// `values.len()`).
+    /// [`Self::domain_element3`] with the index of the value to query and the size of the domain
+    /// (i.e. `values.len()`).
     ///
     /// NOTE: this function is called `encode3` because it uses the three-adic evaluation domain.
-    /// For the two-adic version see `encode2` above.
+    /// For the two-adic version see [`Self::encode2`] above.
     ///
-    /// Under the hood we use the three-adic Inverse Fourier Transform algorithm (`ifft3`), which
-    /// requires the size of the list to be a power of three. If that's not the case, this function
-    /// will automatically pad the provided list with zeros.
+    /// Under the hood we use the three-adic Inverse Fourier Transform algorithm ([`Self::ifft3`]),
+    /// which requires the size of the list to be a power of three. If that's not the case, this
+    /// function will automatically pad the provided list with zeros.
     ///
     /// Additionally, the provided list must not exceed the FFT capacity so it's required to have no
     /// more than 3^(F::T) elements.
@@ -650,13 +660,13 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         polynomial
     }
 
-    /// Recovers the ordered list of values encoded by `encode3`.
+    /// Recovers the ordered list of values encoded by [`Self::encode3`].
     ///
-    /// This is the inverse of `encode3`: given a polynomial produced by `encode3(values)`, calling
-    /// `decode3` returns a list equal to `values` (possibly padded with trailing zeros to the next
-    /// power of three).
+    /// This is the inverse of [`Self::encode3`]: given a polynomial produced by `encode3(values)`,
+    /// calling `decode3` returns a list equal to `values` (possibly padded with trailing zeros to
+    /// the next power of three).
     ///
-    /// Under the hood we use the three-adic Fast Fourier Transform algorithm (`fft3`). The
+    /// Under the hood we use the three-adic Fast Fourier Transform algorithm ([`Self::fft3`]). The
     /// polynomial's coefficient list is zero-padded to the next power of three before the transform
     /// is applied.
     ///
@@ -670,10 +680,10 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         data
     }
 
-    /// Returns the X coordinate of the i-th element of a list encoded with `encode3`.
+    /// Returns the X coordinate of the i-th element of a list encoded with [`Self::encode3`].
     ///
-    /// The returned value is suitable for use with `evaluate` to query the original value from the
-    /// encoded list.
+    /// The returned value is suitable for use with [`Self::evaluate`] to query the original value
+    /// from the encoded list.
     ///
     /// `domain_size` is the length of the original list. It will be rounded up to the next power of
     /// three automatically.
@@ -684,7 +694,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         omega.pow_small(index)
     }
 
-    /// Returns the X coordinate of the i-th point in the coset LDE domain used by `shifted_lde3`.
+    /// Returns the X coordinate of the i-th point in the coset domain used by
+    /// [`Self::shift_domain`].
     ///
     /// Equivalent to `F::MULTIPLICATIVE_GENERATOR * domain_element3(index, domain_size)`.
     ///
@@ -707,31 +718,22 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         self.evaluate(Self::coset_element3(index, domain_size))
     }
 
-    /// Computes a low-degree extension of the polynomial by evaluating it at `m` points on the
-    /// coset `shift * <omega_m>`, where `omega_m` is a primitive `m`-th root of unity and `shift`
-    /// is the multiplicative generator of the field, `F::MULTIPLICATIVE_GENERATOR`. The evaluation
-    /// points are `shift * omega_m^i` for `i = 0..m`.
+    /// Computes a low-degree extension of the polynomial by evaluating it at `m` points, where `m`
+    /// is a power of three strictly larger than the current degree bound.
     ///
-    /// The algorithm shifts the evaluation domain so that the resulting values can be used in
-    /// (DEEP-)FRI without revealing any of the original values. The coset shift is applied by
-    /// multiplying each coefficient `a_k` by `F::MULTIPLICATIVE_GENERATOR^k` before the FFT, which
-    /// is equivalent to substituting `X -> shift * X` in the polynomial.
+    /// The returned vector is an array of `m` evaluations suitable for (ternary) FRI and similar
+    /// algorithms.
     ///
-    /// REQUIRES: `m` must be a power of three at least as large as `self.len()`, and no larger than
-    /// `3^(F::T)`.
+    /// REQUIRES: `m` must be a power of three strictly larger than `self.len()`, and no larger than
+    /// `2^(F::T)`.
     ///
     /// Running time: O(M*log(M)).
-    pub fn shifted_lde3(self, m: usize) -> Vec<F> {
+    pub fn lde3(self, m: usize) -> Vec<F> {
         assert!(utils::is_power_of_three(m));
         assert!(utils::ilog3(m) as u32 <= F::T);
-        assert!(self.coefficients.len() <= m);
+        assert!(self.coefficients.len() < m);
         let mut data = self.coefficients;
         data.resize(m, F::ZERO);
-        let mut shift_pow = F::ONE;
-        for c in data.iter_mut() {
-            *c *= shift_pow;
-            shift_pow *= F::MULTIPLICATIVE_GENERATOR;
-        }
         let omega = Self::three_adic_root_of_unity(m);
         Self::fft3(&mut data, omega);
         data
@@ -761,7 +763,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     /// The implied evaluation domain is the set of powers of an `n`-th root of unity.
     ///
     /// The returned polynomial is also on the value domain and can be switched to the coefficient
-    /// domain by constructing a `Polynomial` object on it (see `encode3`).
+    /// domain by constructing a [`Polynomial`] object on it (see [`Self::encode3`]).
     pub fn multiply_values3(mut lhs: Vec<F>, mut rhs: Vec<F>) -> Vec<F> {
         let n = lhs.len();
         assert!(utils::is_power_of_three(n));
@@ -977,6 +979,12 @@ mod tests {
 
     type Polynomial = super::Polynomial<Scalar>;
 
+    #[inline(always)]
+    const fn from_const(value: u64) -> Scalar {
+        Scalar::from_const(value)
+    }
+
+    #[inline(always)]
     fn get_random_scalar() -> Scalar {
         Scalar::random_default()
     }
@@ -987,10 +995,10 @@ mod tests {
 
     #[test]
     fn test_constant() {
-        let p = Polynomial::constant(Scalar::from_const(42));
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(42));
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(42));
-        assert_eq!(p.evaluate(Scalar::from_const(42)), Scalar::from_const(42));
+        let p = Polynomial::constant(from_const(42));
+        assert_eq!(p.evaluate(from_const(12)), from_const(42));
+        assert_eq!(p.evaluate(from_const(34)), from_const(42));
+        assert_eq!(p.evaluate(from_const(42)), from_const(42));
     }
 
     #[test]
@@ -999,36 +1007,28 @@ mod tests {
         assert_eq!(p, Polynomial::default());
         assert_eq!(p.len(), 0);
         assert_eq!(p.degree_bound(), 0);
-        assert_eq!(p.evaluate(Scalar::from_const(42)), Scalar::from_const(0));
+        assert_eq!(p.evaluate(from_const(42)), from_const(0));
     }
 
     #[test]
     fn test_with_coefficients() {
-        let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
+        let p = Polynomial::with_coefficients(vec![from_const(12), from_const(34), from_const(56)]);
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
         assert_eq!(
             p.take(),
-            vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(56)
-            ]
+            vec![from_const(12), from_const(34), from_const(56)]
         );
     }
 
     #[test]
     fn test_low_degree() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(0),
-            Scalar::from_const(0),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(0),
+            from_const(0),
         ]);
         assert_eq!(p.len(), 5);
         assert_eq!(p.degree_bound(), 3);
@@ -1037,11 +1037,11 @@ mod tests {
     #[test]
     fn test_skip_degree() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
+            from_const(0),
+            from_const(0),
+            from_const(12),
+            from_const(34),
+            from_const(56),
         ]);
         assert_eq!(p.len(), 5);
         assert_eq!(p.degree_bound(), 5);
@@ -1050,11 +1050,11 @@ mod tests {
     #[test]
     fn test_trim_degree() {
         let mut p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(0),
-            Scalar::from_const(0),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(0),
+            from_const(0),
         ]);
         p.trim();
         assert_eq!(p.len(), 3);
@@ -1064,11 +1064,11 @@ mod tests {
     #[test]
     fn test_no_trim() {
         let mut p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
+            from_const(0),
+            from_const(0),
+            from_const(12),
+            from_const(34),
+            from_const(56),
         ]);
         p.trim();
         assert_eq!(p.len(), 5);
@@ -1077,11 +1077,8 @@ mod tests {
 
     #[test]
     fn test_trim_all_zero() {
-        let mut p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-        ]);
+        let mut p =
+            Polynomial::with_coefficients(vec![from_const(0), from_const(0), from_const(0)]);
         p.trim();
         assert_eq!(p.len(), p.degree_bound());
         assert_eq!(p, Polynomial::default());
@@ -1089,58 +1086,50 @@ mod tests {
 
     #[test]
     fn test_pad_extends() {
-        let mut p =
-            Polynomial::with_coefficients(vec![Scalar::from_const(12), Scalar::from_const(34)]);
+        let mut p = Polynomial::with_coefficients(vec![from_const(12), from_const(34)]);
         p.pad(5);
         assert_eq!(p.len(), 5);
         assert_eq!(
             p.take(),
             vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(0),
-                Scalar::from_const(0),
-                Scalar::from_const(0)
+                from_const(12),
+                from_const(34),
+                from_const(0),
+                from_const(0),
+                from_const(0)
             ]
         );
     }
 
     #[test]
     fn test_pad_exact() {
-        let mut p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
+        let mut p =
+            Polynomial::with_coefficients(vec![from_const(12), from_const(34), from_const(56)]);
         p.pad(3);
         assert_eq!(p.len(), 3);
         assert_eq!(
             p.take(),
-            vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(56)
-            ]
+            vec![from_const(12), from_const(34), from_const(56)]
         );
     }
 
     #[test]
     fn test_pad_no_shrink() {
         let mut p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
         ]);
         p.pad(2);
         assert_eq!(p.len(), 4);
         assert_eq!(
             p.take(),
             vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(56),
-                Scalar::from_const(78)
+                from_const(12),
+                from_const(34),
+                from_const(56),
+                from_const(78)
             ]
         );
     }
@@ -1150,38 +1139,24 @@ mod tests {
         let mut p = Polynomial::default();
         p.pad(3);
         assert_eq!(p.len(), 3);
-        assert_eq!(
-            p.take(),
-            vec![
-                Scalar::from_const(0),
-                Scalar::from_const(0),
-                Scalar::from_const(0)
-            ]
-        );
+        assert_eq!(p.take(), vec![from_const(0), from_const(0), from_const(0)]);
     }
 
     #[test]
     fn test_pad_zero_bound() {
-        let mut p =
-            Polynomial::with_coefficients(vec![Scalar::from_const(12), Scalar::from_const(34)]);
+        let mut p = Polynomial::with_coefficients(vec![from_const(12), from_const(34)]);
         p.pad(0);
         assert_eq!(p.len(), 2);
-        assert_eq!(
-            p.take(),
-            vec![Scalar::from_const(12), Scalar::from_const(34)]
-        );
+        assert_eq!(p.take(), vec![from_const(12), from_const(34)]);
     }
 
     #[test]
     fn test_pad_preserves_evaluation() {
-        let mut p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
-        let before = p.evaluate(Scalar::from_const(7));
+        let mut p =
+            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let before = p.evaluate(from_const(7));
         p.pad(6);
-        assert_eq!(p.evaluate(Scalar::from_const(7)), before);
+        assert_eq!(p.evaluate(from_const(7)), before);
     }
 
     #[test]
@@ -1189,173 +1164,165 @@ mod tests {
         let p = from_roots(&[]);
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        assert_ne!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(90)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(13)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(57)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(92)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(46)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(80)), Scalar::from_const(0));
+        assert_ne!(p.evaluate(from_const(12)), from_const(0));
+        assert_ne!(p.evaluate(from_const(34)), from_const(0));
+        assert_ne!(p.evaluate(from_const(56)), from_const(0));
+        assert_ne!(p.evaluate(from_const(78)), from_const(0));
+        assert_ne!(p.evaluate(from_const(90)), from_const(0));
+        assert_ne!(p.evaluate(from_const(13)), from_const(0));
+        assert_ne!(p.evaluate(from_const(57)), from_const(0));
+        assert_ne!(p.evaluate(from_const(92)), from_const(0));
+        assert_ne!(p.evaluate(from_const(46)), from_const(0));
+        assert_ne!(p.evaluate(from_const(80)), from_const(0));
     }
 
     #[test]
     fn test_one_root() {
-        let p = from_roots(&[Scalar::from_const(12)]);
+        let p = from_roots(&[from_const(12)]);
         assert_eq!(p.len(), 2);
         assert_eq!(p.degree_bound(), 2);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(90)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(13)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(57)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(92)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(46)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(80)), Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(12));
+        assert_eq!(p.evaluate(from_const(12)), from_const(0));
+        assert_ne!(p.evaluate(from_const(34)), from_const(0));
+        assert_ne!(p.evaluate(from_const(56)), from_const(0));
+        assert_ne!(p.evaluate(from_const(78)), from_const(0));
+        assert_ne!(p.evaluate(from_const(90)), from_const(0));
+        assert_ne!(p.evaluate(from_const(13)), from_const(0));
+        assert_ne!(p.evaluate(from_const(57)), from_const(0));
+        assert_ne!(p.evaluate(from_const(92)), from_const(0));
+        assert_ne!(p.evaluate(from_const(46)), from_const(0));
+        assert_ne!(p.evaluate(from_const(80)), from_const(0));
+        let (q, v) = p.horner(from_const(12));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_eq!(v, Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(34));
+        assert_eq!(v, from_const(0));
+        let (q, v) = p.horner(from_const(34));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_ne!(v, Scalar::from_const(0));
+        assert_ne!(v, from_const(0));
     }
 
     #[test]
     fn test_three_roots() {
-        let p = from_roots(&[
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
+        let p = from_roots(&[from_const(12), from_const(34), from_const(56)]);
         assert_eq!(p.len(), 4);
         assert_eq!(p.degree_bound(), 4);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(90)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(13)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(57)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(92)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(46)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(80)), Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(12));
+        assert_eq!(p.evaluate(from_const(12)), from_const(0));
+        assert_eq!(p.evaluate(from_const(34)), from_const(0));
+        assert_eq!(p.evaluate(from_const(56)), from_const(0));
+        assert_ne!(p.evaluate(from_const(78)), from_const(0));
+        assert_ne!(p.evaluate(from_const(90)), from_const(0));
+        assert_ne!(p.evaluate(from_const(13)), from_const(0));
+        assert_ne!(p.evaluate(from_const(57)), from_const(0));
+        assert_ne!(p.evaluate(from_const(92)), from_const(0));
+        assert_ne!(p.evaluate(from_const(46)), from_const(0));
+        assert_ne!(p.evaluate(from_const(80)), from_const(0));
+        let (q, v) = p.horner(from_const(12));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_eq!(v, Scalar::from_const(0));
-        let (q, v) = q.horner(Scalar::from_const(34));
+        assert_eq!(v, from_const(0));
+        let (q, v) = q.horner(from_const(34));
         assert_eq!(q.len(), 2);
         assert_eq!(q.degree_bound(), 2);
-        assert_eq!(v, Scalar::from_const(0));
-        let (q, v) = q.horner(Scalar::from_const(56));
+        assert_eq!(v, from_const(0));
+        let (q, v) = q.horner(from_const(56));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_eq!(v, Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(78));
+        assert_eq!(v, from_const(0));
+        let (q, v) = p.horner(from_const(78));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(90));
+        assert_ne!(v, from_const(0));
+        let (q, v) = p.horner(from_const(90));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, Scalar::from_const(0));
+        assert_ne!(v, from_const(0));
     }
 
     #[test]
     fn test_three_roots_reverse_order() {
-        let p = from_roots(&[
-            Scalar::from_const(56),
-            Scalar::from_const(34),
-            Scalar::from_const(12),
-        ]);
+        let p = from_roots(&[from_const(56), from_const(34), from_const(12)]);
         assert_eq!(p.len(), 4);
         assert_eq!(p.degree_bound(), 4);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(90)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(13)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(57)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(92)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(46)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(80)), Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(12));
+        assert_eq!(p.evaluate(from_const(12)), from_const(0));
+        assert_eq!(p.evaluate(from_const(34)), from_const(0));
+        assert_eq!(p.evaluate(from_const(56)), from_const(0));
+        assert_ne!(p.evaluate(from_const(78)), from_const(0));
+        assert_ne!(p.evaluate(from_const(90)), from_const(0));
+        assert_ne!(p.evaluate(from_const(13)), from_const(0));
+        assert_ne!(p.evaluate(from_const(57)), from_const(0));
+        assert_ne!(p.evaluate(from_const(92)), from_const(0));
+        assert_ne!(p.evaluate(from_const(46)), from_const(0));
+        assert_ne!(p.evaluate(from_const(80)), from_const(0));
+        let (q, v) = p.horner(from_const(12));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_eq!(v, Scalar::from_const(0));
-        let (q, v) = q.horner(Scalar::from_const(34));
+        assert_eq!(v, from_const(0));
+        let (q, v) = q.horner(from_const(34));
         assert_eq!(q.len(), 2);
         assert_eq!(q.degree_bound(), 2);
-        assert_eq!(v, Scalar::from_const(0));
-        let (q, v) = q.horner(Scalar::from_const(56));
+        assert_eq!(v, from_const(0));
+        let (q, v) = q.horner(from_const(56));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_eq!(v, Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(78));
+        assert_eq!(v, from_const(0));
+        let (q, v) = p.horner(from_const(78));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, Scalar::from_const(0));
-        let (q, v) = p.horner(Scalar::from_const(90));
+        assert_ne!(v, from_const(0));
+        let (q, v) = p.horner(from_const(90));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, Scalar::from_const(0));
+        assert_ne!(v, from_const(0));
     }
 
     #[test]
     fn test_seven_roots() {
         let p = from_roots(&[
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
-            Scalar::from_const(90),
-            Scalar::from_const(13),
-            Scalar::from_const(57),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
+            from_const(90),
+            from_const(13),
+            from_const(57),
         ]);
         assert_eq!(p.len(), 8);
         assert_eq!(p.degree_bound(), 8);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(90)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(13)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(57)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(92)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(46)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(80)), Scalar::from_const(0));
+        assert_eq!(p.evaluate(from_const(12)), from_const(0));
+        assert_eq!(p.evaluate(from_const(34)), from_const(0));
+        assert_eq!(p.evaluate(from_const(56)), from_const(0));
+        assert_eq!(p.evaluate(from_const(78)), from_const(0));
+        assert_eq!(p.evaluate(from_const(90)), from_const(0));
+        assert_eq!(p.evaluate(from_const(13)), from_const(0));
+        assert_eq!(p.evaluate(from_const(57)), from_const(0));
+        assert_ne!(p.evaluate(from_const(92)), from_const(0));
+        assert_ne!(p.evaluate(from_const(46)), from_const(0));
+        assert_ne!(p.evaluate(from_const(80)), from_const(0));
     }
 
     #[test]
     fn test_seven_roots_reverse_order() {
         let p = from_roots(&[
-            Scalar::from_const(57),
-            Scalar::from_const(13),
-            Scalar::from_const(90),
-            Scalar::from_const(78),
-            Scalar::from_const(56),
-            Scalar::from_const(34),
-            Scalar::from_const(12),
+            from_const(57),
+            from_const(13),
+            from_const(90),
+            from_const(78),
+            from_const(56),
+            from_const(34),
+            from_const(12),
         ]);
         assert_eq!(p.len(), 8);
         assert_eq!(p.degree_bound(), 8);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(90)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(13)), Scalar::from_const(0));
-        assert_eq!(p.evaluate(Scalar::from_const(57)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(92)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(46)), Scalar::from_const(0));
-        assert_ne!(p.evaluate(Scalar::from_const(80)), Scalar::from_const(0));
+        assert_eq!(p.evaluate(from_const(12)), from_const(0));
+        assert_eq!(p.evaluate(from_const(34)), from_const(0));
+        assert_eq!(p.evaluate(from_const(56)), from_const(0));
+        assert_eq!(p.evaluate(from_const(78)), from_const(0));
+        assert_eq!(p.evaluate(from_const(90)), from_const(0));
+        assert_eq!(p.evaluate(from_const(13)), from_const(0));
+        assert_eq!(p.evaluate(from_const(57)), from_const(0));
+        assert_ne!(p.evaluate(from_const(92)), from_const(0));
+        assert_ne!(p.evaluate(from_const(46)), from_const(0));
+        assert_ne!(p.evaluate(from_const(80)), from_const(0));
     }
 
     #[test]
@@ -1363,13 +1330,13 @@ mod tests {
         assert!(
             Polynomial::from_roots(
                 &[
-                    Scalar::from_const(12),
-                    Scalar::from_const(34),
-                    Scalar::from_const(56),
-                    Scalar::from_const(12),
-                    Scalar::from_const(90),
-                    Scalar::from_const(12),
-                    Scalar::from_const(57),
+                    from_const(12),
+                    from_const(34),
+                    from_const(56),
+                    from_const(12),
+                    from_const(90),
+                    from_const(12),
+                    from_const(57),
                 ],
                 get_random_scalar()
             )
@@ -1385,85 +1352,83 @@ mod tests {
 
     #[test]
     fn test_interpolate_one_point1() {
-        let p =
-            Polynomial::interpolate(&[(Scalar::from_const(12), Scalar::from_const(34))]).unwrap();
+        let p = Polynomial::interpolate(&[(from_const(12), from_const(34))]).unwrap();
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(34));
+        assert_eq!(p.evaluate(from_const(12)), from_const(34));
     }
 
     #[test]
     fn test_interpolate_one_point2() {
-        let p =
-            Polynomial::interpolate(&[(Scalar::from_const(34), Scalar::from_const(56))]).unwrap();
+        let p = Polynomial::interpolate(&[(from_const(34), from_const(56))]).unwrap();
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(56));
+        assert_eq!(p.evaluate(from_const(34)), from_const(56));
     }
 
     #[test]
     fn test_interpolate_two_points1() {
         let p = Polynomial::interpolate(&[
-            (Scalar::from_const(12), Scalar::from_const(34)),
-            (Scalar::from_const(56), Scalar::from_const(78)),
+            (from_const(12), from_const(34)),
+            (from_const(56), from_const(78)),
         ])
         .unwrap();
         assert_eq!(p.len(), 2);
         assert_eq!(p.degree_bound(), 2);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(34));
-        assert_eq!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(78));
+        assert_eq!(p.evaluate(from_const(12)), from_const(34));
+        assert_eq!(p.evaluate(from_const(56)), from_const(78));
     }
 
     #[test]
     fn test_interpolate_two_points2() {
         let p = Polynomial::interpolate(&[
-            (Scalar::from_const(34), Scalar::from_const(12)),
-            (Scalar::from_const(78), Scalar::from_const(56)),
+            (from_const(34), from_const(12)),
+            (from_const(78), from_const(56)),
         ])
         .unwrap();
         assert_eq!(p.len(), 2);
         assert_eq!(p.degree_bound(), 2);
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(12));
-        assert_eq!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(56));
+        assert_eq!(p.evaluate(from_const(34)), from_const(12));
+        assert_eq!(p.evaluate(from_const(78)), from_const(56));
     }
 
     #[test]
     fn test_interpolate_three_points1() {
         let p = Polynomial::interpolate(&[
-            (Scalar::from_const(12), Scalar::from_const(34)),
-            (Scalar::from_const(56), Scalar::from_const(78)),
-            (Scalar::from_const(90), Scalar::from_const(12)),
+            (from_const(12), from_const(34)),
+            (from_const(56), from_const(78)),
+            (from_const(90), from_const(12)),
         ])
         .unwrap();
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(34));
-        assert_eq!(p.evaluate(Scalar::from_const(56)), Scalar::from_const(78));
-        assert_eq!(p.evaluate(Scalar::from_const(90)), Scalar::from_const(12));
+        assert_eq!(p.evaluate(from_const(12)), from_const(34));
+        assert_eq!(p.evaluate(from_const(56)), from_const(78));
+        assert_eq!(p.evaluate(from_const(90)), from_const(12));
     }
 
     #[test]
     fn test_interpolate_three_points2() {
         let p = Polynomial::interpolate(&[
-            (Scalar::from_const(34), Scalar::from_const(12)),
-            (Scalar::from_const(78), Scalar::from_const(56)),
-            (Scalar::from_const(12), Scalar::from_const(90)),
+            (from_const(34), from_const(12)),
+            (from_const(78), from_const(56)),
+            (from_const(12), from_const(90)),
         ])
         .unwrap();
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
-        assert_eq!(p.evaluate(Scalar::from_const(34)), Scalar::from_const(12));
-        assert_eq!(p.evaluate(Scalar::from_const(78)), Scalar::from_const(56));
-        assert_eq!(p.evaluate(Scalar::from_const(12)), Scalar::from_const(90));
+        assert_eq!(p.evaluate(from_const(34)), from_const(12));
+        assert_eq!(p.evaluate(from_const(78)), from_const(56));
+        assert_eq!(p.evaluate(from_const(12)), from_const(90));
     }
 
     #[test]
     fn test_duplicate_coordinates() {
         assert!(
             Polynomial::interpolate(&[
-                (Scalar::from_const(12), Scalar::from_const(34)),
-                (Scalar::from_const(56), Scalar::from_const(78)),
-                (Scalar::from_const(12), Scalar::from_const(90)),
+                (from_const(12), from_const(34)),
+                (from_const(56), from_const(78)),
+                (from_const(12), from_const(90)),
             ])
             .is_err()
         );
@@ -1471,8 +1436,8 @@ mod tests {
 
     #[test]
     fn test_encode2_one_value_1() {
-        let p1 = Polynomial::encode2(vec![Scalar::from_const(42)]);
-        let p2 = Polynomial::encode2(vec![Scalar::from_const(42)]);
+        let p1 = Polynomial::encode2(vec![from_const(42)]);
+        let p2 = Polynomial::encode2(vec![from_const(42)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 1);
         assert_eq!(p1.degree_bound(), 1);
@@ -1480,37 +1445,34 @@ mod tests {
         assert_eq!(p2.degree_bound(), 1);
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(0, 1)),
-            Scalar::from_const(42)
+            from_const(42)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 1), Scalar::from_const(42));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 1), from_const(42));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 1)),
-            Scalar::from_const(42)
+            from_const(42)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 1), Scalar::from_const(42));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 1), from_const(42));
     }
 
     #[test]
     fn test_encode2_one_value_2() {
-        let p1 = Polynomial::encode2(vec![Scalar::from_const(42)]);
-        let p2 = Polynomial::encode2(vec![Scalar::from_const(123)]);
+        let p1 = Polynomial::encode2(vec![from_const(42)]);
+        let p2 = Polynomial::encode2(vec![from_const(123)]);
         assert_eq!(p2.len(), 1);
         assert_eq!(p2.degree_bound(), 1);
         assert_ne!(p1, p2);
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 1)),
-            Scalar::from_const(123)
+            from_const(123)
         );
-        assert_eq!(
-            p2.evaluate_on_two_adic_domain(0, 1),
-            Scalar::from_const(123)
-        );
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 1), from_const(123));
     }
 
     #[test]
     fn test_encode2_two_values_1() {
-        let p1 = Polynomial::encode2(vec![Scalar::from_const(12), Scalar::from_const(34)]);
-        let p2 = Polynomial::encode2(vec![Scalar::from_const(12), Scalar::from_const(34)]);
+        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34)]);
+        let p2 = Polynomial::encode2(vec![from_const(12), from_const(34)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 2);
         assert_eq!(p1.degree_bound(), 2);
@@ -1518,30 +1480,30 @@ mod tests {
         assert_eq!(p2.degree_bound(), 2);
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(0, 2)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 2), Scalar::from_const(12));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 2), from_const(12));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(1, 2)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(1, 2), Scalar::from_const(34));
+        assert_eq!(p1.evaluate_on_two_adic_domain(1, 2), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 2)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), Scalar::from_const(12));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), from_const(12));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(1, 2)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), Scalar::from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), from_const(34));
     }
 
     #[test]
     fn test_encode2_two_values_2() {
-        let p1 = Polynomial::encode2(vec![Scalar::from_const(12), Scalar::from_const(34)]);
-        let p2 = Polynomial::encode2(vec![Scalar::from_const(78), Scalar::from_const(56)]);
+        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34)]);
+        let p2 = Polynomial::encode2(vec![from_const(78), from_const(56)]);
         assert_eq!(p1.len(), 2);
         assert_eq!(p1.degree_bound(), 2);
         assert_eq!(p2.len(), 2);
@@ -1549,28 +1511,20 @@ mod tests {
         assert_ne!(p1, p2);
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 2)),
-            Scalar::from_const(78)
+            from_const(78)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), Scalar::from_const(78));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), from_const(78));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(1, 2)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), Scalar::from_const(56));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), from_const(56));
     }
 
     #[test]
     fn test_encode2_three_values_1() {
-        let p1 = Polynomial::encode2(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
-        let p2 = Polynomial::encode2(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
+        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
+        let p2 = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 4);
         assert_eq!(p1.degree_bound(), 4);
@@ -1578,88 +1532,80 @@ mod tests {
         assert_eq!(p2.degree_bound(), 4);
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(0, 3)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 3), Scalar::from_const(12));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 3), from_const(12));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(0, 4)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 4), Scalar::from_const(12));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 4), from_const(12));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(1, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(1, 3), Scalar::from_const(34));
+        assert_eq!(p1.evaluate_on_two_adic_domain(1, 3), from_const(34));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(1, 4)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(1, 4), Scalar::from_const(34));
+        assert_eq!(p1.evaluate_on_two_adic_domain(1, 4), from_const(34));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(2, 3)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(2, 3), Scalar::from_const(56));
+        assert_eq!(p1.evaluate_on_two_adic_domain(2, 3), from_const(56));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(2, 4)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(2, 4), Scalar::from_const(56));
+        assert_eq!(p1.evaluate_on_two_adic_domain(2, 4), from_const(56));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element2(3, 4)),
-            Scalar::from_const(0)
+            from_const(0)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(3, 4), Scalar::from_const(0));
+        assert_eq!(p1.evaluate_on_two_adic_domain(3, 4), from_const(0));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 3)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), Scalar::from_const(12));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), from_const(12));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 4)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), Scalar::from_const(12));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), from_const(12));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(1, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), Scalar::from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(1, 4)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), Scalar::from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(2, 3)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), Scalar::from_const(56));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), from_const(56));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(2, 4)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), Scalar::from_const(56));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), from_const(56));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(3, 4)),
-            Scalar::from_const(0)
+            from_const(0)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), Scalar::from_const(0));
+        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), from_const(0));
     }
 
     #[test]
     fn test_encode2_three_values_2() {
-        let p1 = Polynomial::encode2(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
-        let p2 = Polynomial::encode2(vec![
-            Scalar::from_const(90),
-            Scalar::from_const(78),
-            Scalar::from_const(34),
-        ]);
+        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
+        let p2 = Polynomial::encode2(vec![from_const(90), from_const(78), from_const(34)]);
         assert_eq!(p1.len(), 4);
         assert_eq!(p1.degree_bound(), 4);
         assert_eq!(p2.len(), 4);
@@ -1667,101 +1613,97 @@ mod tests {
         assert_ne!(p1, p2);
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 3)),
-            Scalar::from_const(90)
+            from_const(90)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), Scalar::from_const(90));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), from_const(90));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(0, 4)),
-            Scalar::from_const(90)
+            from_const(90)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), Scalar::from_const(90));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), from_const(90));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(1, 3)),
-            Scalar::from_const(78)
+            from_const(78)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), Scalar::from_const(78));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), from_const(78));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(1, 4)),
-            Scalar::from_const(78)
+            from_const(78)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), Scalar::from_const(78));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), from_const(78));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(2, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), Scalar::from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(2, 4)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), Scalar::from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element2(3, 4)),
-            Scalar::from_const(0)
+            from_const(0)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), Scalar::from_const(0));
+        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), from_const(0));
     }
 
     #[test]
     fn test_encode2_four_values() {
         let p = Polynomial::encode2(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
         ]);
         assert_eq!(p.len(), 4);
         assert_eq!(p.degree_bound(), 4);
         assert_eq!(
             p.evaluate(Polynomial::domain_element2(0, 4)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(0, 4), Scalar::from_const(12));
+        assert_eq!(p.evaluate_on_two_adic_domain(0, 4), from_const(12));
         assert_eq!(
             p.evaluate(Polynomial::domain_element2(1, 4)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(1, 4), Scalar::from_const(34));
+        assert_eq!(p.evaluate_on_two_adic_domain(1, 4), from_const(34));
         assert_eq!(
             p.evaluate(Polynomial::domain_element2(2, 4)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(2, 4), Scalar::from_const(56));
+        assert_eq!(p.evaluate_on_two_adic_domain(2, 4), from_const(56));
         assert_eq!(
             p.evaluate(Polynomial::domain_element2(3, 4)),
-            Scalar::from_const(78)
+            from_const(78)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(3, 4), Scalar::from_const(78));
+        assert_eq!(p.evaluate_on_two_adic_domain(3, 4), from_const(78));
     }
 
     #[test]
     fn test_decode2_one_value() {
-        let values = vec![Scalar::from_const(42)];
+        let values = vec![from_const(42)];
         let polynomial = Polynomial::encode2(values.clone());
         assert_eq!(polynomial.decode2(), values);
     }
 
     #[test]
     fn test_decode2_two_values() {
-        let values = vec![Scalar::from_const(12), Scalar::from_const(34)];
+        let values = vec![from_const(12), from_const(34)];
         let polynomial = Polynomial::encode2(values.clone());
         assert_eq!(polynomial.decode2(), values);
     }
 
     #[test]
     fn test_decode2_three_values() {
-        let polynomial = Polynomial::encode2(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
+        let polynomial = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
         assert_eq!(
             polynomial.decode2(),
             vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(56),
-                Scalar::from_const(0)
+                from_const(12),
+                from_const(34),
+                from_const(56),
+                from_const(0)
             ]
         );
     }
@@ -1769,10 +1711,10 @@ mod tests {
     #[test]
     fn test_decode2_four_values() {
         let values = vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
         ];
         let polynomial = Polynomial::encode2(values.clone());
         assert_eq!(polynomial.decode2(), values);
@@ -1780,8 +1722,8 @@ mod tests {
 
     #[test]
     fn test_encode3_one_value_1() {
-        let p1 = Polynomial::encode3(vec![Scalar::from_const(42)]);
-        let p2 = Polynomial::encode3(vec![Scalar::from_const(42)]);
+        let p1 = Polynomial::encode3(vec![from_const(42)]);
+        let p2 = Polynomial::encode3(vec![from_const(42)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 1);
         assert_eq!(p1.degree_bound(), 1);
@@ -1789,43 +1731,34 @@ mod tests {
         assert_eq!(p2.degree_bound(), 1);
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(0, 1)),
-            Scalar::from_const(42)
+            from_const(42)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(0, 1),
-            Scalar::from_const(42)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 1), from_const(42));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(0, 1)),
-            Scalar::from_const(42)
+            from_const(42)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(0, 1),
-            Scalar::from_const(42)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 1), from_const(42));
     }
 
     #[test]
     fn test_encode3_one_value_2() {
-        let p1 = Polynomial::encode3(vec![Scalar::from_const(42)]);
-        let p2 = Polynomial::encode3(vec![Scalar::from_const(123)]);
+        let p1 = Polynomial::encode3(vec![from_const(42)]);
+        let p2 = Polynomial::encode3(vec![from_const(123)]);
         assert_eq!(p2.len(), 1);
         assert_eq!(p2.degree_bound(), 1);
         assert_ne!(p1, p2);
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(0, 1)),
-            Scalar::from_const(123)
+            from_const(123)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(0, 1),
-            Scalar::from_const(123)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 1), from_const(123));
     }
 
     #[test]
     fn test_encode3_two_values_1() {
-        let p1 = Polynomial::encode3(vec![Scalar::from_const(12), Scalar::from_const(34)]);
-        let p2 = Polynomial::encode3(vec![Scalar::from_const(12), Scalar::from_const(34)]);
+        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34)]);
+        let p2 = Polynomial::encode3(vec![from_const(12), from_const(34)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
@@ -1833,90 +1766,60 @@ mod tests {
         assert_eq!(p2.degree_bound(), 3);
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(0, 2)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(0, 2),
-            Scalar::from_const(12)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 2), from_const(12));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(0, 3)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(0, 3),
-            Scalar::from_const(12)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 3), from_const(12));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(1, 2)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(1, 2),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(1, 2), from_const(34));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(1, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(1, 3),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(1, 3), from_const(34));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(2, 3)),
-            Scalar::from_const(0)
+            from_const(0)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(2, 3),
-            Scalar::from_const(0)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(2, 3), from_const(0));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(0, 2)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(0, 2),
-            Scalar::from_const(12)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 2), from_const(12));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(0, 3)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(0, 3),
-            Scalar::from_const(12)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), from_const(12));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(1, 2)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(1, 2),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 2), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(1, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(1, 3),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(2, 3)),
-            Scalar::from_const(0)
+            from_const(0)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(2, 3),
-            Scalar::from_const(0)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(0));
     }
 
     #[test]
     fn test_encode3_two_values_2() {
-        let p1 = Polynomial::encode3(vec![Scalar::from_const(12), Scalar::from_const(34)]);
-        let p2 = Polynomial::encode3(vec![Scalar::from_const(78), Scalar::from_const(56)]);
+        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34)]);
+        let p2 = Polynomial::encode3(vec![from_const(78), from_const(56)]);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
         assert_eq!(p2.len(), 3);
@@ -1924,42 +1827,25 @@ mod tests {
         assert_ne!(p1, p2);
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(0, 2)),
-            Scalar::from_const(78)
+            from_const(78)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(0, 2),
-            Scalar::from_const(78)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 2), from_const(78));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(1, 2)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(1, 2),
-            Scalar::from_const(56)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 2), from_const(56));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(2, 3)),
-            Scalar::from_const(0)
+            from_const(0)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(2, 3),
-            Scalar::from_const(0)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(0));
     }
 
     #[test]
     fn test_encode3_three_values_1() {
-        let p1 = Polynomial::encode3(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
-        let p2 = Polynomial::encode3(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
+        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34), from_const(56)]);
+        let p2 = Polynomial::encode3(vec![from_const(12), from_const(34), from_const(56)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
@@ -1967,66 +1853,40 @@ mod tests {
         assert_eq!(p2.degree_bound(), 3);
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(0, 3)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(0, 3),
-            Scalar::from_const(12)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 3), from_const(12));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(1, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(1, 3),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(1, 3), from_const(34));
         assert_eq!(
             p1.evaluate(Polynomial::domain_element3(2, 3)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(
-            p1.evaluate_on_three_adic_domain(2, 3),
-            Scalar::from_const(56)
-        );
+        assert_eq!(p1.evaluate_on_three_adic_domain(2, 3), from_const(56));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(0, 3)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(0, 3),
-            Scalar::from_const(12)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), from_const(12));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(1, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(1, 3),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), from_const(34));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(2, 3)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(2, 3),
-            Scalar::from_const(56)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(56));
     }
 
     #[test]
     fn test_encode3_three_values_2() {
-        let p1 = Polynomial::encode3(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ]);
-        let p2 = Polynomial::encode3(vec![
-            Scalar::from_const(90),
-            Scalar::from_const(78),
-            Scalar::from_const(34),
-        ]);
+        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34), from_const(56)]);
+        let p2 = Polynomial::encode3(vec![from_const(90), from_const(78), from_const(34)]);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
         assert_eq!(p2.len(), 3);
@@ -2034,147 +1894,103 @@ mod tests {
         assert_ne!(p1, p2);
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(0, 3)),
-            Scalar::from_const(90)
+            from_const(90)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(0, 3),
-            Scalar::from_const(90)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), from_const(90));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(1, 3)),
-            Scalar::from_const(78)
+            from_const(78)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(1, 3),
-            Scalar::from_const(78)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), from_const(78));
         assert_eq!(
             p2.evaluate(Polynomial::domain_element3(2, 3)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p2.evaluate_on_three_adic_domain(2, 3),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(34));
     }
 
     #[test]
     fn test_encode3_nine_values3() {
         let p = Polynomial::encode3(vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
-            Scalar::from_const(90),
-            Scalar::from_const(11),
-            Scalar::from_const(22),
-            Scalar::from_const(33),
-            Scalar::from_const(44),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
+            from_const(90),
+            from_const(11),
+            from_const(22),
+            from_const(33),
+            from_const(44),
         ]);
         assert_eq!(p.len(), 9);
         assert_eq!(p.degree_bound(), 9);
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(0, 9)),
-            Scalar::from_const(12)
+            from_const(12)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(0, 9),
-            Scalar::from_const(12)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(0, 9), from_const(12));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(1, 9)),
-            Scalar::from_const(34)
+            from_const(34)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(1, 9),
-            Scalar::from_const(34)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(1, 9), from_const(34));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(2, 9)),
-            Scalar::from_const(56)
+            from_const(56)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(2, 9),
-            Scalar::from_const(56)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(2, 9), from_const(56));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(3, 9)),
-            Scalar::from_const(78)
+            from_const(78)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(3, 9),
-            Scalar::from_const(78)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(3, 9), from_const(78));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(4, 9)),
-            Scalar::from_const(90)
+            from_const(90)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(4, 9),
-            Scalar::from_const(90)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(4, 9), from_const(90));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(5, 9)),
-            Scalar::from_const(11)
+            from_const(11)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(5, 9),
-            Scalar::from_const(11)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(5, 9), from_const(11));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(6, 9)),
-            Scalar::from_const(22)
+            from_const(22)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(6, 9),
-            Scalar::from_const(22)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(6, 9), from_const(22));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(7, 9)),
-            Scalar::from_const(33)
+            from_const(33)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(7, 9),
-            Scalar::from_const(33)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(7, 9), from_const(33));
         assert_eq!(
             p.evaluate(Polynomial::domain_element3(8, 9)),
-            Scalar::from_const(44)
+            from_const(44)
         );
-        assert_eq!(
-            p.evaluate_on_three_adic_domain(8, 9),
-            Scalar::from_const(44)
-        );
+        assert_eq!(p.evaluate_on_three_adic_domain(8, 9), from_const(44));
     }
 
     #[test]
     fn test_decode3_one_value() {
-        let values = vec![Scalar::from_const(42)];
+        let values = vec![from_const(42)];
         let polynomial = Polynomial::encode3(values.clone());
         assert_eq!(polynomial.decode3(), values);
     }
 
     #[test]
     fn test_decode3_two_values() {
-        let values = vec![Scalar::from_const(12), Scalar::from_const(34)];
+        let values = vec![from_const(12), from_const(34)];
         let polynomial = Polynomial::encode3(values.clone());
         assert_eq!(
             polynomial.decode3(),
-            vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(0)
-            ]
+            vec![from_const(12), from_const(34), from_const(0)]
         );
     }
 
     #[test]
     fn test_decode3_three_values() {
-        let values = vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ];
+        let values = vec![from_const(12), from_const(34), from_const(56)];
         let polynomial = Polynomial::encode3(values.clone());
         assert_eq!(polynomial.decode3(), values);
     }
@@ -2182,15 +1998,15 @@ mod tests {
     #[test]
     fn test_decode3_nine_values() {
         let values = vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
-            Scalar::from_const(90),
-            Scalar::from_const(11),
-            Scalar::from_const(22),
-            Scalar::from_const(33),
-            Scalar::from_const(44),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
+            from_const(90),
+            from_const(11),
+            from_const(22),
+            from_const(33),
+            from_const(44),
         ];
         let polynomial = Polynomial::encode3(values.clone());
         assert_eq!(polynomial.decode3(), values);
@@ -2198,145 +2014,86 @@ mod tests {
 
     #[test]
     fn test_add_same_length() {
-        let p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
         assert_eq!(
             p1 + p2,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(11),
-                Scalar::from_const(22),
-                Scalar::from_const(33)
-            ])
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
         );
     }
 
     #[test]
     fn test_add_lhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
-        let p2 =
-            Polynomial::with_coefficients(vec![Scalar::from_const(10), Scalar::from_const(20)]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
         assert_eq!(
             p1 + p2,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(11),
-                Scalar::from_const(22),
-                Scalar::from_const(3)
-            ])
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
         );
     }
 
     #[test]
     fn test_add_rhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
         assert_eq!(
             p1 + p2,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(11),
-                Scalar::from_const(22),
-                Scalar::from_const(30)
-            ])
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
         );
     }
 
     #[test]
     fn test_add_commutative() {
-        let p1 = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
         assert_eq!(p1.clone() + p2.clone(), p2 + p1);
     }
 
     #[test]
     fn test_add_assign_same_length() {
-        let mut p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
         p1 += p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(11),
-                Scalar::from_const(22),
-                Scalar::from_const(33)
-            ])
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
         );
     }
 
     #[test]
     fn test_add_assign_lhs_longer() {
-        let mut p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
-        let p2 =
-            Polynomial::with_coefficients(vec![Scalar::from_const(10), Scalar::from_const(20)]);
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
         p1 += p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(11),
-                Scalar::from_const(22),
-                Scalar::from_const(3)
-            ])
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
         );
     }
 
     #[test]
     fn test_add_assign_rhs_longer() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
+        let mut p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
         p1 += p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(11),
-                Scalar::from_const(22),
-                Scalar::from_const(30)
-            ])
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
         );
     }
 
     #[test]
     fn test_add_assign_consistent_with_add() {
-        let p1 = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
         let mut p1_assign = p1.clone();
         p1_assign += p2.clone();
         assert_eq!(p1_assign, p1 + p2);
@@ -2344,146 +2101,82 @@ mod tests {
 
     #[test]
     fn test_sub_same_length() {
-        let p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
+        let p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         assert_eq!(
             p1 - p2,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(9),
-                Scalar::from_const(18),
-                Scalar::from_const(27)
-            ])
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
         );
     }
 
     #[test]
     fn test_sub_lhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
-        let p2 = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
+        let p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
         assert_eq!(
             p1 - p2,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(9),
-                Scalar::from_const(18),
-                Scalar::from_const(30)
-            ])
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
         );
     }
 
     #[test]
     fn test_sub_rhs_longer() {
-        let p1 =
-            Polynomial::with_coefficients(vec![Scalar::from_const(10), Scalar::from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         assert_eq!(
             p1 - p2,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(9),
-                Scalar::from_const(18),
-                -Scalar::from_const(3)
-            ])
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
         );
     }
 
     #[test]
     fn test_sub_anticommutative() {
-        let p1 =
-            Polynomial::with_coefficients(vec![Scalar::from_const(10), Scalar::from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         assert_eq!(p1.clone() - p2.clone(), -(p2 - p1));
     }
 
     #[test]
     fn test_sub_assign_same_length() {
-        let mut p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         p1 -= p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(9),
-                Scalar::from_const(18),
-                Scalar::from_const(27)
-            ])
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
         );
     }
 
     #[test]
     fn test_sub_assign_lhs_longer() {
-        let mut p1 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(20),
-            Scalar::from_const(30),
-        ]);
-        let p2 = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
         p1 -= p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(9),
-                Scalar::from_const(18),
-                Scalar::from_const(30)
-            ])
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
         );
     }
 
     #[test]
     fn test_sub_assign_rhs_longer() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![Scalar::from_const(10), Scalar::from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
+        let mut p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         p1 -= p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![
-                Scalar::from_const(9),
-                Scalar::from_const(18),
-                -Scalar::from_const(3)
-            ])
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
         );
     }
 
     #[test]
     fn test_sub_assign_consistent_with_sub() {
-        let p1 =
-            Polynomial::with_coefficients(vec![Scalar::from_const(10), Scalar::from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
+        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         let mut p1_assign = p1.clone();
         p1_assign -= p2.clone();
         assert_eq!(p1_assign, p1 - p2);
@@ -2500,7 +2193,7 @@ mod tests {
     fn test_multiply_empty_by_non_empty() {
         let p1 = Polynomial::default();
         let p2 = Polynomial {
-            coefficients: vec![Scalar::from_const(12), Scalar::from_const(34)],
+            coefficients: vec![from_const(12), from_const(34)],
         };
         assert_eq!(p1.multiply(p2), Polynomial::default());
     }
@@ -2508,7 +2201,7 @@ mod tests {
     #[test]
     fn test_multiply_non_empty_by_empty() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(56), Scalar::from_const(78)],
+            coefficients: vec![from_const(56), from_const(78)],
         };
         let p2 = Polynomial::default();
         assert_eq!(p1.multiply(p2), Polynomial::default());
@@ -2517,23 +2210,15 @@ mod tests {
     #[test]
     fn test_multiply_constant() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(3)],
+            coefficients: vec![from_const(3)],
         };
         let p2 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(56),
-            ],
+            coefficients: vec![from_const(12), from_const(34), from_const(56)],
         };
         assert_eq!(
             p1.multiply(p2),
             Polynomial {
-                coefficients: vec![
-                    Scalar::from_const(36),
-                    Scalar::from_const(102),
-                    Scalar::from_const(168)
-                ]
+                coefficients: vec![from_const(36), from_const(102), from_const(168)]
             }
         );
     }
@@ -2541,23 +2226,15 @@ mod tests {
     #[test]
     fn test_multiply_by_constant() {
         let p1 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(12),
-                Scalar::from_const(34),
-                Scalar::from_const(56),
-            ],
+            coefficients: vec![from_const(12), from_const(34), from_const(56)],
         };
         let p2 = Polynomial {
-            coefficients: vec![Scalar::from_const(3)],
+            coefficients: vec![from_const(3)],
         };
         assert_eq!(
             p1.multiply(p2),
             Polynomial {
-                coefficients: vec![
-                    Scalar::from_const(36),
-                    Scalar::from_const(102),
-                    Scalar::from_const(168)
-                ]
+                coefficients: vec![from_const(36), from_const(102), from_const(168)]
             }
         );
     }
@@ -2565,15 +2242,15 @@ mod tests {
     #[test]
     fn test_multiply_constant_by_constant() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(12)],
+            coefficients: vec![from_const(12)],
         };
         let p2 = Polynomial {
-            coefficients: vec![Scalar::from_const(34)],
+            coefficients: vec![from_const(34)],
         };
         assert_eq!(
             p1.multiply(p2),
             Polynomial {
-                coefficients: vec![Scalar::from_const(408)]
+                coefficients: vec![from_const(408)]
             }
         );
     }
@@ -2581,17 +2258,13 @@ mod tests {
     #[test]
     fn test_multiply_polynomials1() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(1), Scalar::from_const(2)],
+            coefficients: vec![from_const(1), from_const(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![Scalar::from_const(3), Scalar::from_const(4)],
+            coefficients: vec![from_const(3), from_const(4)],
         };
         let result = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(10),
-                Scalar::from_const(8),
-            ],
+            coefficients: vec![from_const(3), from_const(10), from_const(8)],
         };
         assert_eq!(p1.clone().multiply(p2.clone()), result);
         assert_eq!(p2.multiply(p1), result);
@@ -2600,21 +2273,17 @@ mod tests {
     #[test]
     fn test_multiply_polynomials2() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(1), Scalar::from_const(2)],
+            coefficients: vec![from_const(1), from_const(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(4),
-                Scalar::from_const(5),
-            ],
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
         };
         let result = Polynomial {
             coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(10),
-                Scalar::from_const(13),
-                Scalar::from_const(10),
+                from_const(3),
+                from_const(10),
+                from_const(13),
+                from_const(10),
             ],
         };
         assert_eq!(p1.clone().multiply(p2.clone()), result);
@@ -2624,21 +2293,17 @@ mod tests {
     #[test]
     fn test_polynomial_mul_op() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(1), Scalar::from_const(2)],
+            coefficients: vec![from_const(1), from_const(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(4),
-                Scalar::from_const(5),
-            ],
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
         };
         let result = Polynomial {
             coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(10),
-                Scalar::from_const(13),
-                Scalar::from_const(10),
+                from_const(3),
+                from_const(10),
+                from_const(13),
+                from_const(10),
             ],
         };
         assert_eq!(p1.clone() * p2.clone(), result);
@@ -2648,24 +2313,20 @@ mod tests {
     #[test]
     fn test_polynomial_mul_assign() {
         let mut p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(1), Scalar::from_const(2)],
+            coefficients: vec![from_const(1), from_const(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(4),
-                Scalar::from_const(5),
-            ],
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
         };
         p1 *= p2;
         assert_eq!(
             p1,
             Polynomial {
                 coefficients: vec![
-                    Scalar::from_const(3),
-                    Scalar::from_const(10),
-                    Scalar::from_const(13),
-                    Scalar::from_const(10)
+                    from_const(3),
+                    from_const(10),
+                    from_const(13),
+                    from_const(10)
                 ],
             }
         );
@@ -2674,7 +2335,7 @@ mod tests {
     #[test]
     fn test_multiply_one_polynomial() {
         let p = Polynomial {
-            coefficients: vec![Scalar::from_const(12), Scalar::from_const(34)],
+            coefficients: vec![from_const(12), from_const(34)],
         };
         assert_eq!(Polynomial::multiply_many([p.clone()]), p);
     }
@@ -2682,21 +2343,17 @@ mod tests {
     #[test]
     fn test_multiply_two_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(1), Scalar::from_const(2)],
+            coefficients: vec![from_const(1), from_const(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(4),
-                Scalar::from_const(5),
-            ],
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
         };
         let result = Polynomial {
             coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(10),
-                Scalar::from_const(13),
-                Scalar::from_const(10),
+                from_const(3),
+                from_const(10),
+                from_const(13),
+                from_const(10),
             ],
         };
         assert_eq!(Polynomial::multiply_many([p1.clone(), p2.clone()]), result);
@@ -2706,32 +2363,23 @@ mod tests {
     #[test]
     fn test_multiply_three_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(1), Scalar::from_const(2)],
+            coefficients: vec![from_const(1), from_const(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(3),
-                Scalar::from_const(4),
-                Scalar::from_const(5),
-            ],
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
         };
         let p3 = Polynomial {
-            coefficients: vec![
-                Scalar::from_const(6),
-                Scalar::from_const(7),
-                Scalar::from_const(8),
-                Scalar::from_const(9),
-            ],
+            coefficients: vec![from_const(6), from_const(7), from_const(8), from_const(9)],
         };
         let result = Polynomial {
             coefficients: vec![
-                Scalar::from_const(18),
-                Scalar::from_const(81),
-                Scalar::from_const(172),
-                Scalar::from_const(258),
-                Scalar::from_const(264),
-                Scalar::from_const(197),
-                Scalar::from_const(90),
+                from_const(18),
+                from_const(81),
+                from_const(172),
+                from_const(258),
+                from_const(264),
+                from_const(197),
+                from_const(90),
             ],
         };
         assert_eq!(
@@ -2763,24 +2411,24 @@ mod tests {
     #[test]
     fn test_multiply_four_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![Scalar::from_const(1), Scalar::from_const(2)],
+            coefficients: vec![from_const(1), from_const(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![Scalar::from_const(3), Scalar::from_const(4)],
+            coefficients: vec![from_const(3), from_const(4)],
         };
         let p3 = Polynomial {
-            coefficients: vec![Scalar::from_const(5), Scalar::from_const(6)],
+            coefficients: vec![from_const(5), from_const(6)],
         };
         let p4 = Polynomial {
-            coefficients: vec![Scalar::from_const(7), Scalar::from_const(8)],
+            coefficients: vec![from_const(7), from_const(8)],
         };
         let result = Polynomial {
             coefficients: vec![
-                Scalar::from_const(105),
-                Scalar::from_const(596),
-                Scalar::from_const(1244),
-                Scalar::from_const(1136),
-                Scalar::from_const(384),
+                from_const(105),
+                from_const(596),
+                from_const(1244),
+                from_const(1136),
+                from_const(384),
             ],
         };
         assert_eq!(
@@ -2806,17 +2454,17 @@ mod tests {
     fn test_divide_zero_by_zero() {
         let z = Polynomial {
             coefficients: vec![
-                -Scalar::from_const(1),
-                Scalar::from_const(0),
-                Scalar::from_const(0),
-                Scalar::from_const(0),
-                Scalar::from_const(1),
+                -from_const(1),
+                from_const(0),
+                from_const(0),
+                from_const(0),
+                from_const(1),
             ],
         };
         assert_eq!(
             z.divide_by_zero(4).unwrap(),
             Polynomial {
-                coefficients: vec![Scalar::from_const(1)]
+                coefficients: vec![from_const(1)]
             }
         );
     }
@@ -2824,42 +2472,42 @@ mod tests {
     #[test]
     fn test_non_trivial_quotient1() {
         let ql = Polynomial::encode2(vec![
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-            Scalar::from_const(1),
-            Scalar::from_const(1),
+            from_const(0),
+            from_const(0),
+            from_const(1),
+            from_const(1),
         ]);
         let qr = Polynomial::encode2(vec![
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-            Scalar::from_const(1),
-            Scalar::from_const(1),
+            from_const(0),
+            from_const(0),
+            from_const(1),
+            from_const(1),
         ]);
-        let qo = Polynomial::encode2(vec![-Scalar::from_const(1); 4]);
+        let qo = Polynomial::encode2(vec![-from_const(1); 4]);
         let qm = Polynomial::encode2(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(1),
-            Scalar::from_const(0),
-            Scalar::from_const(0),
+            from_const(1),
+            from_const(1),
+            from_const(0),
+            from_const(0),
         ]);
-        let qc = Polynomial::encode2(vec![Scalar::from_const(0); 4]);
+        let qc = Polynomial::encode2(vec![from_const(0); 4]);
         let l = Polynomial::encode2(vec![
-            Scalar::from_const(3),
-            Scalar::from_const(9),
-            Scalar::from_const(3),
-            Scalar::from_const(30),
+            from_const(3),
+            from_const(9),
+            from_const(3),
+            from_const(30),
         ]);
         let r = Polynomial::encode2(vec![
-            Scalar::from_const(3),
-            Scalar::from_const(3),
-            Scalar::from_const(27),
-            Scalar::from_const(5),
+            from_const(3),
+            from_const(3),
+            from_const(27),
+            from_const(5),
         ]);
         let o = Polynomial::encode2(vec![
-            Scalar::from_const(9),
-            Scalar::from_const(27),
-            Scalar::from_const(30),
-            Scalar::from_const(35),
+            from_const(9),
+            from_const(27),
+            from_const(30),
+            from_const(35),
         ]);
         let lr = l.clone().multiply(r.clone());
         let p = ql.multiply(l) + qr.multiply(r) + qo.multiply(o) + qm.multiply(lr) + qc;
@@ -2871,42 +2519,42 @@ mod tests {
     #[test]
     fn test_non_trivial_quotient2() {
         let ql = Polynomial::encode2(vec![
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-            Scalar::from_const(1),
-            Scalar::from_const(1),
+            from_const(0),
+            from_const(0),
+            from_const(1),
+            from_const(1),
         ]);
         let qr = Polynomial::encode2(vec![
-            Scalar::from_const(0),
-            Scalar::from_const(0),
-            Scalar::from_const(1),
-            Scalar::from_const(5),
+            from_const(0),
+            from_const(0),
+            from_const(1),
+            from_const(5),
         ]);
-        let qo = Polynomial::encode2(vec![-Scalar::from_const(1); 4]);
+        let qo = Polynomial::encode2(vec![-from_const(1); 4]);
         let qm = Polynomial::encode2(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(1),
-            Scalar::from_const(0),
-            Scalar::from_const(0),
+            from_const(1),
+            from_const(1),
+            from_const(0),
+            from_const(0),
         ]);
-        let qc = Polynomial::encode2(vec![Scalar::from_const(0); 4]);
+        let qc = Polynomial::encode2(vec![from_const(0); 4]);
         let l = Polynomial::encode2(vec![
-            Scalar::from_const(3),
-            Scalar::from_const(9),
-            Scalar::from_const(3),
-            Scalar::from_const(30),
+            from_const(3),
+            from_const(9),
+            from_const(3),
+            from_const(30),
         ]);
         let r = Polynomial::encode2(vec![
-            Scalar::from_const(3),
-            Scalar::from_const(3),
-            Scalar::from_const(27),
-            Scalar::from_const(1),
+            from_const(3),
+            from_const(3),
+            from_const(27),
+            from_const(1),
         ]);
         let o = Polynomial::encode2(vec![
-            Scalar::from_const(9),
-            Scalar::from_const(27),
-            Scalar::from_const(30),
-            Scalar::from_const(35),
+            from_const(9),
+            from_const(27),
+            from_const(30),
+            from_const(35),
         ]);
         let lr = l.clone().multiply(r.clone());
         let p = ql.multiply(l) + qr.multiply(r) + qo.multiply(o) + qm.multiply(lr) + qc;
@@ -2916,185 +2564,179 @@ mod tests {
     }
 
     #[test]
-    fn test_lde2_same_size() {
+    fn test_shift_domain2() {
         let values = vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
         ];
         let p = Polynomial::encode2(values);
-        let lde = p.clone().shifted_lde2(4);
+        let shifted = p.clone().shift_domain();
         assert_eq!(
-            lde,
-            vec![
-                p.evaluate_on_two_adic_coset(0, 4),
-                p.evaluate_on_two_adic_coset(1, 4),
-                p.evaluate_on_two_adic_coset(2, 4),
-                p.evaluate_on_two_adic_coset(3, 4),
-            ]
+            shifted.evaluate_on_two_adic_domain(0, 4),
+            p.evaluate_on_two_adic_coset(0, 4)
+        );
+        assert_eq!(
+            shifted.evaluate_on_two_adic_domain(1, 4),
+            p.evaluate_on_two_adic_coset(1, 4)
+        );
+        assert_eq!(
+            shifted.evaluate_on_two_adic_domain(2, 4),
+            p.evaluate_on_two_adic_coset(2, 4)
+        );
+        assert_eq!(
+            shifted.evaluate_on_two_adic_domain(3, 4),
+            p.evaluate_on_two_adic_coset(3, 4)
+        );
+    }
+
+    #[test]
+    fn test_shift_domain3() {
+        let values = vec![from_const(12), from_const(34), from_const(56)];
+        let p = Polynomial::encode3(values);
+        let shifted = p.clone().shift_domain();
+        assert_eq!(
+            shifted.evaluate_on_three_adic_domain(0, 3),
+            p.evaluate_on_three_adic_coset(0, 3)
+        );
+        assert_eq!(
+            shifted.evaluate_on_three_adic_domain(1, 3),
+            p.evaluate_on_three_adic_coset(1, 3)
+        );
+        assert_eq!(
+            shifted.evaluate_on_three_adic_domain(2, 3),
+            p.evaluate_on_three_adic_coset(2, 3)
         );
     }
 
     #[test]
     fn test_lde2_blowup2() {
         let values = vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-            Scalar::from_const(78),
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
         ];
         let p = Polynomial::encode2(values);
-        let lde = p.clone().shifted_lde2(8);
+        let lde = p.clone().lde2(8);
         assert_eq!(
             lde,
             vec![
-                p.evaluate_on_two_adic_coset(0, 8),
-                p.evaluate_on_two_adic_coset(1, 8),
-                p.evaluate_on_two_adic_coset(2, 8),
-                p.evaluate_on_two_adic_coset(3, 8),
-                p.evaluate_on_two_adic_coset(4, 8),
-                p.evaluate_on_two_adic_coset(5, 8),
-                p.evaluate_on_two_adic_coset(6, 8),
-                p.evaluate_on_two_adic_coset(7, 8),
+                p.evaluate_on_two_adic_domain(0, 8),
+                p.evaluate_on_two_adic_domain(1, 8),
+                p.evaluate_on_two_adic_domain(2, 8),
+                p.evaluate_on_two_adic_domain(3, 8),
+                p.evaluate_on_two_adic_domain(4, 8),
+                p.evaluate_on_two_adic_domain(5, 8),
+                p.evaluate_on_two_adic_domain(6, 8),
+                p.evaluate_on_two_adic_domain(7, 8),
             ]
         );
     }
 
     #[test]
     fn test_lde2_blowup4() {
-        let values = vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-            Scalar::from_const(4),
-        ];
+        let values = vec![from_const(1), from_const(2), from_const(3), from_const(4)];
         let p = Polynomial::encode2(values);
-        let lde = p.clone().shifted_lde2(16);
+        let lde = p.clone().lde2(16);
         assert_eq!(
             lde,
             vec![
-                p.evaluate_on_two_adic_coset(0, 16),
-                p.evaluate_on_two_adic_coset(1, 16),
-                p.evaluate_on_two_adic_coset(2, 16),
-                p.evaluate_on_two_adic_coset(3, 16),
-                p.evaluate_on_two_adic_coset(4, 16),
-                p.evaluate_on_two_adic_coset(5, 16),
-                p.evaluate_on_two_adic_coset(6, 16),
-                p.evaluate_on_two_adic_coset(7, 16),
-                p.evaluate_on_two_adic_coset(8, 16),
-                p.evaluate_on_two_adic_coset(9, 16),
-                p.evaluate_on_two_adic_coset(10, 16),
-                p.evaluate_on_two_adic_coset(11, 16),
-                p.evaluate_on_two_adic_coset(12, 16),
-                p.evaluate_on_two_adic_coset(13, 16),
-                p.evaluate_on_two_adic_coset(14, 16),
-                p.evaluate_on_two_adic_coset(15, 16),
+                p.evaluate_on_two_adic_domain(0, 16),
+                p.evaluate_on_two_adic_domain(1, 16),
+                p.evaluate_on_two_adic_domain(2, 16),
+                p.evaluate_on_two_adic_domain(3, 16),
+                p.evaluate_on_two_adic_domain(4, 16),
+                p.evaluate_on_two_adic_domain(5, 16),
+                p.evaluate_on_two_adic_domain(6, 16),
+                p.evaluate_on_two_adic_domain(7, 16),
+                p.evaluate_on_two_adic_domain(8, 16),
+                p.evaluate_on_two_adic_domain(9, 16),
+                p.evaluate_on_two_adic_domain(10, 16),
+                p.evaluate_on_two_adic_domain(11, 16),
+                p.evaluate_on_two_adic_domain(12, 16),
+                p.evaluate_on_two_adic_domain(13, 16),
+                p.evaluate_on_two_adic_domain(14, 16),
+                p.evaluate_on_two_adic_domain(15, 16),
             ]
         );
     }
 
     #[test]
     fn test_lde2_shorter_polynomial() {
-        let values = vec![Scalar::from_const(42), Scalar::from_const(42)];
+        let values = vec![from_const(42), from_const(42)];
         let p = Polynomial::encode2(values);
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        let lde = p.clone().shifted_lde2(4);
+        let lde = p.clone().lde2(4);
         assert_eq!(
             lde,
             vec![
-                p.evaluate_on_two_adic_coset(0, 4),
-                p.evaluate_on_two_adic_coset(1, 4),
-                p.evaluate_on_two_adic_coset(2, 4),
-                p.evaluate_on_two_adic_coset(3, 4),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_lde3_same_size() {
-        let values = vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ];
-        let p = Polynomial::encode3(values.clone());
-        let lde = p.clone().shifted_lde3(3);
-        assert_eq!(
-            lde,
-            vec![
-                p.evaluate_on_three_adic_coset(0, 3),
-                p.evaluate_on_three_adic_coset(1, 3),
-                p.evaluate_on_three_adic_coset(2, 3),
+                p.evaluate_on_two_adic_domain(0, 4),
+                p.evaluate_on_two_adic_domain(1, 4),
+                p.evaluate_on_two_adic_domain(2, 4),
+                p.evaluate_on_two_adic_domain(3, 4),
             ]
         );
     }
 
     #[test]
     fn test_lde3_blowup3() {
-        let values = vec![
-            Scalar::from_const(12),
-            Scalar::from_const(34),
-            Scalar::from_const(56),
-        ];
+        let values = vec![from_const(12), from_const(34), from_const(56)];
         let p = Polynomial::encode3(values);
-        let lde = p.clone().shifted_lde3(9);
+        let lde = p.clone().lde3(9);
         assert_eq!(
             lde,
             vec![
-                p.evaluate_on_three_adic_coset(0, 9),
-                p.evaluate_on_three_adic_coset(1, 9),
-                p.evaluate_on_three_adic_coset(2, 9),
-                p.evaluate_on_three_adic_coset(3, 9),
-                p.evaluate_on_three_adic_coset(4, 9),
-                p.evaluate_on_three_adic_coset(5, 9),
-                p.evaluate_on_three_adic_coset(6, 9),
-                p.evaluate_on_three_adic_coset(7, 9),
-                p.evaluate_on_three_adic_coset(8, 9),
+                p.evaluate_on_three_adic_domain(0, 9),
+                p.evaluate_on_three_adic_domain(1, 9),
+                p.evaluate_on_three_adic_domain(2, 9),
+                p.evaluate_on_three_adic_domain(3, 9),
+                p.evaluate_on_three_adic_domain(4, 9),
+                p.evaluate_on_three_adic_domain(5, 9),
+                p.evaluate_on_three_adic_domain(6, 9),
+                p.evaluate_on_three_adic_domain(7, 9),
+                p.evaluate_on_three_adic_domain(8, 9),
             ]
         );
     }
 
     #[test]
     fn test_lde3_blowup9() {
-        let values = vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ];
+        let values = vec![from_const(1), from_const(2), from_const(3)];
         let p = Polynomial::encode3(values);
-        let lde = p.clone().shifted_lde3(27);
+        let lde = p.clone().lde3(27);
         assert_eq!(
             lde,
             vec![
-                p.evaluate_on_three_adic_coset(0, 27),
-                p.evaluate_on_three_adic_coset(1, 27),
-                p.evaluate_on_three_adic_coset(2, 27),
-                p.evaluate_on_three_adic_coset(3, 27),
-                p.evaluate_on_three_adic_coset(4, 27),
-                p.evaluate_on_three_adic_coset(5, 27),
-                p.evaluate_on_three_adic_coset(6, 27),
-                p.evaluate_on_three_adic_coset(7, 27),
-                p.evaluate_on_three_adic_coset(8, 27),
-                p.evaluate_on_three_adic_coset(9, 27),
-                p.evaluate_on_three_adic_coset(10, 27),
-                p.evaluate_on_three_adic_coset(11, 27),
-                p.evaluate_on_three_adic_coset(12, 27),
-                p.evaluate_on_three_adic_coset(13, 27),
-                p.evaluate_on_three_adic_coset(14, 27),
-                p.evaluate_on_three_adic_coset(15, 27),
-                p.evaluate_on_three_adic_coset(16, 27),
-                p.evaluate_on_three_adic_coset(17, 27),
-                p.evaluate_on_three_adic_coset(18, 27),
-                p.evaluate_on_three_adic_coset(19, 27),
-                p.evaluate_on_three_adic_coset(20, 27),
-                p.evaluate_on_three_adic_coset(21, 27),
-                p.evaluate_on_three_adic_coset(22, 27),
-                p.evaluate_on_three_adic_coset(23, 27),
-                p.evaluate_on_three_adic_coset(24, 27),
-                p.evaluate_on_three_adic_coset(25, 27),
-                p.evaluate_on_three_adic_coset(26, 27),
+                p.evaluate_on_three_adic_domain(0, 27),
+                p.evaluate_on_three_adic_domain(1, 27),
+                p.evaluate_on_three_adic_domain(2, 27),
+                p.evaluate_on_three_adic_domain(3, 27),
+                p.evaluate_on_three_adic_domain(4, 27),
+                p.evaluate_on_three_adic_domain(5, 27),
+                p.evaluate_on_three_adic_domain(6, 27),
+                p.evaluate_on_three_adic_domain(7, 27),
+                p.evaluate_on_three_adic_domain(8, 27),
+                p.evaluate_on_three_adic_domain(9, 27),
+                p.evaluate_on_three_adic_domain(10, 27),
+                p.evaluate_on_three_adic_domain(11, 27),
+                p.evaluate_on_three_adic_domain(12, 27),
+                p.evaluate_on_three_adic_domain(13, 27),
+                p.evaluate_on_three_adic_domain(14, 27),
+                p.evaluate_on_three_adic_domain(15, 27),
+                p.evaluate_on_three_adic_domain(16, 27),
+                p.evaluate_on_three_adic_domain(17, 27),
+                p.evaluate_on_three_adic_domain(18, 27),
+                p.evaluate_on_three_adic_domain(19, 27),
+                p.evaluate_on_three_adic_domain(20, 27),
+                p.evaluate_on_three_adic_domain(21, 27),
+                p.evaluate_on_three_adic_domain(22, 27),
+                p.evaluate_on_three_adic_domain(23, 27),
+                p.evaluate_on_three_adic_domain(24, 27),
+                p.evaluate_on_three_adic_domain(25, 27),
+                p.evaluate_on_three_adic_domain(26, 27),
             ]
         );
     }
@@ -3103,52 +2745,48 @@ mod tests {
     fn test_lde3_nine_values_blowup3() {
         let values = (1u64..=9).map(Scalar::from).collect();
         let p = Polynomial::encode3(values);
-        let lde = p.clone().shifted_lde3(27);
+        let lde = p.clone().lde3(27);
         assert_eq!(
             lde,
             vec![
-                p.evaluate_on_three_adic_coset(0, 27),
-                p.evaluate_on_three_adic_coset(1, 27),
-                p.evaluate_on_three_adic_coset(2, 27),
-                p.evaluate_on_three_adic_coset(3, 27),
-                p.evaluate_on_three_adic_coset(4, 27),
-                p.evaluate_on_three_adic_coset(5, 27),
-                p.evaluate_on_three_adic_coset(6, 27),
-                p.evaluate_on_three_adic_coset(7, 27),
-                p.evaluate_on_three_adic_coset(8, 27),
-                p.evaluate_on_three_adic_coset(9, 27),
-                p.evaluate_on_three_adic_coset(10, 27),
-                p.evaluate_on_three_adic_coset(11, 27),
-                p.evaluate_on_three_adic_coset(12, 27),
-                p.evaluate_on_three_adic_coset(13, 27),
-                p.evaluate_on_three_adic_coset(14, 27),
-                p.evaluate_on_three_adic_coset(15, 27),
-                p.evaluate_on_three_adic_coset(16, 27),
-                p.evaluate_on_three_adic_coset(17, 27),
-                p.evaluate_on_three_adic_coset(18, 27),
-                p.evaluate_on_three_adic_coset(19, 27),
-                p.evaluate_on_three_adic_coset(20, 27),
-                p.evaluate_on_three_adic_coset(21, 27),
-                p.evaluate_on_three_adic_coset(22, 27),
-                p.evaluate_on_three_adic_coset(23, 27),
-                p.evaluate_on_three_adic_coset(24, 27),
-                p.evaluate_on_three_adic_coset(25, 27),
-                p.evaluate_on_three_adic_coset(26, 27),
+                p.evaluate_on_three_adic_domain(0, 27),
+                p.evaluate_on_three_adic_domain(1, 27),
+                p.evaluate_on_three_adic_domain(2, 27),
+                p.evaluate_on_three_adic_domain(3, 27),
+                p.evaluate_on_three_adic_domain(4, 27),
+                p.evaluate_on_three_adic_domain(5, 27),
+                p.evaluate_on_three_adic_domain(6, 27),
+                p.evaluate_on_three_adic_domain(7, 27),
+                p.evaluate_on_three_adic_domain(8, 27),
+                p.evaluate_on_three_adic_domain(9, 27),
+                p.evaluate_on_three_adic_domain(10, 27),
+                p.evaluate_on_three_adic_domain(11, 27),
+                p.evaluate_on_three_adic_domain(12, 27),
+                p.evaluate_on_three_adic_domain(13, 27),
+                p.evaluate_on_three_adic_domain(14, 27),
+                p.evaluate_on_three_adic_domain(15, 27),
+                p.evaluate_on_three_adic_domain(16, 27),
+                p.evaluate_on_three_adic_domain(17, 27),
+                p.evaluate_on_three_adic_domain(18, 27),
+                p.evaluate_on_three_adic_domain(19, 27),
+                p.evaluate_on_three_adic_domain(20, 27),
+                p.evaluate_on_three_adic_domain(21, 27),
+                p.evaluate_on_three_adic_domain(22, 27),
+                p.evaluate_on_three_adic_domain(23, 27),
+                p.evaluate_on_three_adic_domain(24, 27),
+                p.evaluate_on_three_adic_domain(25, 27),
+                p.evaluate_on_three_adic_domain(26, 27),
             ]
         );
     }
 
     #[test]
     fn test_lde3_shorter_poly() {
-        let values = vec![
-            Scalar::from_const(7),
-            Scalar::from_const(7),
-            Scalar::from_const(7),
-        ];
+        let values = vec![from_const(7), from_const(7), from_const(7)];
         let p = Polynomial::encode3(values);
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        let lde = p.clone().shifted_lde3(9);
+        let lde = p.clone().lde3(9);
         assert_eq!(
             lde,
             vec![
@@ -3167,153 +2805,121 @@ mod tests {
 
     #[test]
     fn test_fold2_degree_zero() {
-        let p = Polynomial::with_coefficients(vec![Scalar::from_const(5)]);
-        assert_eq!(
-            p.clone().fold2(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(5)]
-        );
-        assert_eq!(
-            p.fold2(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(5)]
-        );
+        let p = Polynomial::with_coefficients(vec![from_const(5)]);
+        assert_eq!(p.clone().fold2(from_const(2)).take(), vec![from_const(5)]);
+        assert_eq!(p.fold2(from_const(3)).take(), vec![from_const(5)]);
     }
 
     #[test]
     fn test_fold2_degree_one() {
-        let p = Polynomial::with_coefficients(vec![Scalar::from_const(2), Scalar::from_const(3)]);
-        assert_eq!(
-            p.clone().fold2(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(8)]
-        );
-        assert_eq!(
-            p.fold2(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(11)]
-        );
+        let p = Polynomial::with_coefficients(vec![from_const(2), from_const(3)]);
+        assert_eq!(p.clone().fold2(from_const(2)).take(), vec![from_const(8)]);
+        assert_eq!(p.fold2(from_const(3)).take(), vec![from_const(11)]);
     }
 
     #[test]
     fn test_fold2_degree_two() {
-        let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         assert_eq!(
-            p.clone().fold2(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(5), Scalar::from_const(3)],
+            p.clone().fold2(from_const(2)).take(),
+            vec![from_const(5), from_const(3)],
         );
         assert_eq!(
-            p.fold2(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(7), Scalar::from_const(3)],
+            p.fold2(from_const(3)).take(),
+            vec![from_const(7), from_const(3)],
         );
     }
 
     #[test]
     fn test_fold2_degree_three() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-            Scalar::from_const(4),
+            from_const(1),
+            from_const(2),
+            from_const(3),
+            from_const(4),
         ]);
         assert_eq!(
-            p.clone().fold2(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(5), Scalar::from_const(11)],
+            p.clone().fold2(from_const(2)).take(),
+            vec![from_const(5), from_const(11)],
         );
         assert_eq!(
-            p.fold2(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(7), Scalar::from_const(15)],
+            p.fold2(from_const(3)).take(),
+            vec![from_const(7), from_const(15)],
         );
     }
 
     #[test]
     fn test_fold3_degree_zero() {
-        let p = Polynomial::with_coefficients(vec![Scalar::from_const(5)]);
-        assert_eq!(
-            p.clone().fold3(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(5)]
-        );
-        assert_eq!(
-            p.fold3(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(5)]
-        );
+        let p = Polynomial::with_coefficients(vec![from_const(5)]);
+        assert_eq!(p.clone().fold3(from_const(2)).take(), vec![from_const(5)]);
+        assert_eq!(p.fold3(from_const(3)).take(), vec![from_const(5)]);
     }
 
     #[test]
     fn test_fold3_degree_two() {
-        let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
-        assert_eq!(
-            p.clone().fold3(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(17)]
-        );
-        assert_eq!(
-            p.fold3(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(34)]
-        );
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        assert_eq!(p.clone().fold3(from_const(2)).take(), vec![from_const(17)]);
+        assert_eq!(p.fold3(from_const(3)).take(), vec![from_const(34)]);
     }
 
     #[test]
     fn test_fold3_degree_three() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-            Scalar::from_const(4),
+            from_const(1),
+            from_const(2),
+            from_const(3),
+            from_const(4),
         ]);
         assert_eq!(
-            p.clone().fold3(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(17), Scalar::from_const(4)],
+            p.clone().fold3(from_const(2)).take(),
+            vec![from_const(17), from_const(4)],
         );
         assert_eq!(
-            p.fold3(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(34), Scalar::from_const(4)],
+            p.fold3(from_const(3)).take(),
+            vec![from_const(34), from_const(4)],
         );
     }
 
     #[test]
     fn test_fold3_degree_five() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-            Scalar::from_const(4),
-            Scalar::from_const(5),
-            Scalar::from_const(6),
+            from_const(1),
+            from_const(2),
+            from_const(3),
+            from_const(4),
+            from_const(5),
+            from_const(6),
         ]);
         assert_eq!(
-            p.clone().fold3(Scalar::from_const(2)).take(),
-            vec![Scalar::from_const(17), Scalar::from_const(38)],
+            p.clone().fold3(from_const(2)).take(),
+            vec![from_const(17), from_const(38)],
         );
         assert_eq!(
-            p.fold3(Scalar::from_const(3)).take(),
-            vec![Scalar::from_const(34), Scalar::from_const(73)],
+            p.fold3(from_const(3)).take(),
+            vec![from_const(34), from_const(73)],
         );
     }
 
     #[test]
     fn test_multiply_values2_same_constant() {
-        let lhs = vec![Scalar::from_const(42), Scalar::from_const(42)];
-        let rhs = vec![Scalar::from_const(42), Scalar::from_const(42)];
+        let lhs = vec![from_const(42), from_const(42)];
+        let rhs = vec![from_const(42), from_const(42)];
         let result = Polynomial::multiply_values2(lhs, rhs);
-        assert_eq!(result, vec![Scalar::from_const(1764)]);
+        assert_eq!(result, vec![from_const(1764)]);
     }
 
     #[test]
     fn test_multiply_values2_different_constants() {
-        let lhs = vec![Scalar::from_const(3), Scalar::from_const(3)];
-        let rhs = vec![Scalar::from_const(7), Scalar::from_const(7)];
+        let lhs = vec![from_const(3), from_const(3)];
+        let rhs = vec![from_const(7), from_const(7)];
         let result = Polynomial::multiply_values2(lhs, rhs);
-        assert_eq!(result, vec![Scalar::from_const(21)]);
+        assert_eq!(result, vec![from_const(21)]);
     }
 
     #[test]
     fn test_multiply_values2_two_linear_polynomials() {
-        let p = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![Scalar::from_const(3), Scalar::from_const(4)]);
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
         let lhs = vec![
             p.evaluate_on_two_adic_domain(0, 2),
             p.evaluate_on_two_adic_domain(1, 2),
@@ -3338,16 +2944,16 @@ mod tests {
     #[test]
     fn test_multiply_values2_four_values() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-            Scalar::from_const(4),
+            from_const(1),
+            from_const(2),
+            from_const(3),
+            from_const(4),
         ]);
         let q = Polynomial::with_coefficients(vec![
-            Scalar::from_const(5),
-            Scalar::from_const(6),
-            Scalar::from_const(7),
-            Scalar::from_const(8),
+            from_const(5),
+            from_const(6),
+            from_const(7),
+            from_const(8),
         ]);
         let lhs = vec![
             p.evaluate_on_two_adic_domain(0, 4),
@@ -3380,8 +2986,8 @@ mod tests {
 
     #[test]
     fn test_multiply_values2_commutative() {
-        let p = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![Scalar::from_const(3), Scalar::from_const(4)]);
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
         let values_p = vec![
             p.evaluate_on_two_adic_domain(0, 2),
             p.evaluate_on_two_adic_domain(1, 2),
@@ -3398,16 +3004,16 @@ mod tests {
     #[test]
     fn test_multiply_values2_round_trip() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-            Scalar::from_const(4),
+            from_const(1),
+            from_const(2),
+            from_const(3),
+            from_const(4),
         ]);
         let q = Polynomial::with_coefficients(vec![
-            Scalar::from_const(5),
-            Scalar::from_const(6),
-            Scalar::from_const(7),
-            Scalar::from_const(8),
+            from_const(5),
+            from_const(6),
+            from_const(7),
+            from_const(8),
         ]);
         let lhs = vec![
             p.evaluate_on_two_adic_domain(0, 4),
@@ -3428,40 +3034,24 @@ mod tests {
 
     #[test]
     fn test_multiply_values3_same_constant() {
-        let lhs = vec![
-            Scalar::from_const(42),
-            Scalar::from_const(42),
-            Scalar::from_const(42),
-        ];
-        let rhs = vec![
-            Scalar::from_const(42),
-            Scalar::from_const(42),
-            Scalar::from_const(42),
-        ];
+        let lhs = vec![from_const(42), from_const(42), from_const(42)];
+        let rhs = vec![from_const(42), from_const(42), from_const(42)];
         let result = Polynomial::multiply_values3(lhs, rhs);
-        assert_eq!(result, vec![Scalar::from_const(1764)]);
+        assert_eq!(result, vec![from_const(1764)]);
     }
 
     #[test]
     fn test_multiply_values3_different_constants() {
-        let lhs = vec![
-            Scalar::from_const(3),
-            Scalar::from_const(3),
-            Scalar::from_const(3),
-        ];
-        let rhs = vec![
-            Scalar::from_const(7),
-            Scalar::from_const(7),
-            Scalar::from_const(7),
-        ];
+        let lhs = vec![from_const(3), from_const(3), from_const(3)];
+        let rhs = vec![from_const(7), from_const(7), from_const(7)];
         let result = Polynomial::multiply_values3(lhs, rhs);
-        assert_eq!(result, vec![Scalar::from_const(21)]);
+        assert_eq!(result, vec![from_const(21)]);
     }
 
     #[test]
     fn test_multiply_values3_two_linear_polynomials() {
-        let p = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![Scalar::from_const(3), Scalar::from_const(4)]);
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
         let lhs = vec![
             p.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_domain(1, 3),
@@ -3487,26 +3077,26 @@ mod tests {
     #[test]
     fn test_multiply_values3_nine_values() {
         let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-            Scalar::from_const(4),
-            Scalar::from_const(5),
-            Scalar::from_const(6),
-            Scalar::from_const(7),
-            Scalar::from_const(8),
-            Scalar::from_const(9),
+            from_const(1),
+            from_const(2),
+            from_const(3),
+            from_const(4),
+            from_const(5),
+            from_const(6),
+            from_const(7),
+            from_const(8),
+            from_const(9),
         ]);
         let q = Polynomial::with_coefficients(vec![
-            Scalar::from_const(10),
-            Scalar::from_const(11),
-            Scalar::from_const(12),
-            Scalar::from_const(13),
-            Scalar::from_const(14),
-            Scalar::from_const(15),
-            Scalar::from_const(16),
-            Scalar::from_const(17),
-            Scalar::from_const(18),
+            from_const(10),
+            from_const(11),
+            from_const(12),
+            from_const(13),
+            from_const(14),
+            from_const(15),
+            from_const(16),
+            from_const(17),
+            from_const(18),
         ]);
         let lhs = vec![
             p.evaluate_on_three_adic_domain(0, 9),
@@ -3568,8 +3158,8 @@ mod tests {
 
     #[test]
     fn test_multiply_values3_commutative() {
-        let p = Polynomial::with_coefficients(vec![Scalar::from_const(1), Scalar::from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![Scalar::from_const(3), Scalar::from_const(4)]);
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
         let values_p = vec![
             p.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_domain(1, 3),
@@ -3587,16 +3177,8 @@ mod tests {
 
     #[test]
     fn test_multiply_values3_round_trip() {
-        let p = Polynomial::with_coefficients(vec![
-            Scalar::from_const(1),
-            Scalar::from_const(2),
-            Scalar::from_const(3),
-        ]);
-        let q = Polynomial::with_coefficients(vec![
-            Scalar::from_const(4),
-            Scalar::from_const(5),
-            Scalar::from_const(6),
-        ]);
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let q = Polynomial::with_coefficients(vec![from_const(4), from_const(5), from_const(6)]);
         let lhs = vec![
             p.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_domain(1, 3),
@@ -3616,7 +3198,7 @@ mod tests {
     fn test_lagrange0_1() {
         let n = 1;
         let l0 = Polynomial::lagrange0(n);
-        assert_eq!(l0.evaluate(Scalar::from_const(1)), Scalar::from_const(1));
+        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
     }
 
     #[test]
@@ -3624,8 +3206,8 @@ mod tests {
         let n = 2;
         let omega = Polynomial::domain_element2(1, n);
         let l0 = Polynomial::lagrange0(n);
-        assert_eq!(l0.evaluate(Scalar::from_const(1)), Scalar::from_const(1));
-        assert_eq!(l0.evaluate(omega), Scalar::from_const(0));
+        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+        assert_eq!(l0.evaluate(omega), from_const(0));
     }
 
     #[test]
@@ -3633,10 +3215,10 @@ mod tests {
         let n = 4;
         let omega = Polynomial::domain_element2(1, n);
         let l0 = Polynomial::lagrange0(n);
-        assert_eq!(l0.evaluate(Scalar::from_const(1)), Scalar::from_const(1));
-        assert_eq!(l0.evaluate(omega), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.square()), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.cube()), Scalar::from_const(0));
+        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+        assert_eq!(l0.evaluate(omega), from_const(0));
+        assert_eq!(l0.evaluate(omega.square()), from_const(0));
+        assert_eq!(l0.evaluate(omega.cube()), from_const(0));
     }
 
     #[test]
@@ -3644,13 +3226,13 @@ mod tests {
         let n = 8;
         let omega = Polynomial::domain_element2(1, n);
         let l0 = Polynomial::lagrange0(n);
-        assert_eq!(l0.evaluate(Scalar::from_const(1)), Scalar::from_const(1));
-        assert_eq!(l0.evaluate(omega), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(2)), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(3)), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(4)), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(5)), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(6)), Scalar::from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(7)), Scalar::from_const(0));
+        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+        assert_eq!(l0.evaluate(omega), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(2)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(3)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(4)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(5)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(6)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(7)), from_const(0));
     }
 }
