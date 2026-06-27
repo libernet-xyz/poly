@@ -495,8 +495,8 @@ impl<F: PrimeField> Polynomial<F> {
         omega.pow_small(index)
     }
 
-    /// Returns the X coordinate of the i-th point in the coset LDE domain used by
-    /// [`Self::shifted_lde2`].
+    /// Returns the X coordinate of the i-th point in the coset domain used by
+    /// [`Self::shift_domain`].
     ///
     /// Equivalent to `F::MULTIPLICATIVE_GENERATOR * domain_element2(index, domain_size)`.
     ///
@@ -694,8 +694,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         omega.pow_small(index)
     }
 
-    /// Returns the X coordinate of the i-th point in the coset LDE domain used by
-    /// [`Self::shifted_lde3`].
+    /// Returns the X coordinate of the i-th point in the coset domain used by
+    /// [`Self::shift_domain`].
     ///
     /// Equivalent to `F::MULTIPLICATIVE_GENERATOR * domain_element3(index, domain_size)`.
     ///
