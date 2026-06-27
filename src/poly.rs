@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::{Mutex, OnceLock};
 
-/// Builds the Lagrange basis polynomials returned by `Polynomial::lagrange0()`.
+/// Builds the Lagrange basis polynomials returned by [`Polynomial::lagrange0`].
 ///
 /// Running time: O(N).
 fn make_lagrange0<F: PrimeField>(n: usize) -> Polynomial<F> {
@@ -80,8 +80,8 @@ impl<F: PrimeField> Polynomial<F> {
 
     /// Interpolates a polynomial that has the given roots.
     ///
-    /// This algorithm is roughly twice faster than simply calling `interpolate` with 0 as the y
-    /// coordinate of all points.
+    /// This algorithm is roughly twice faster than simply calling [`Self::interpolate`] with 0 as
+    /// the y coordinate of all points.
     ///
     /// NOTE: if the caller's protocol doesn't require a blinding factor it can be set to 1. Do NOT
     /// set it to 0, as that would nullify the whole polynomial.
@@ -172,15 +172,16 @@ impl<F: PrimeField> Polynomial<F> {
     /// Interpolates a polynomial that encodes an ordered list of values.
     ///
     /// The returned polynomial evaluates to the provided values at certain powers of
-    /// `F::ROOT_OF_UNITY`. The exact coordinates can be retrieved by calling `domain_element2` with
-    /// the index of the value to query and the size of the domain (i.e. `values.len()`).
+    /// `F::ROOT_OF_UNITY`. The exact coordinates can be retrieved by calling
+    /// [`Self::domain_element2`] with the index of the value to query and the size of the domain
+    /// (i.e. `values.len()`).
     ///
     /// NOTE: this function is called `encode2` because it uses the two-adic evaluation domain. For
-    /// the three-adic version see `encode3` below.
+    /// the three-adic version see [`Self::encode3`] below.
     ///
-    /// Under the hood we use the two-adic Inverse Fourier Transform algorithm (`ifft2`), which
-    /// requires the size of the list to be a power of two. If that's not the case, this function
-    /// will automatically pad the provided list with zeros.
+    /// Under the hood we use the two-adic Inverse Fourier Transform algorithm ([`Self::ifft2`]),
+    /// which requires the size of the list to be a power of two. If that's not the case, this
+    /// function will automatically pad the provided list with zeros.
     ///
     /// Additionally, the provided list must not exceed the FFT capacity so it's required to have no
     /// more than 2^(F::S) elements.
@@ -200,13 +201,13 @@ impl<F: PrimeField> Polynomial<F> {
         polynomial
     }
 
-    /// Recovers the ordered list of values encoded by `encode2`.
+    /// Recovers the ordered list of values encoded by [`Self::encode2`].
     ///
-    /// This is the inverse of `encode2`: given a polynomial produced by `encode2(values)`, calling
-    /// `decode2` returns a list equal to `values` (possibly padded with trailing zeros to the next
-    /// power of two).
+    /// This is the inverse of [`Self::encode2`]: given a polynomial produced by `encode2(values)`,
+    /// calling `decode2` returns a list equal to `values` (possibly padded with trailing zeros to
+    /// the next power of two).
     ///
-    /// Under the hood we use the two-adic Fast Fourier Transform algorithm (`fft2`). The
+    /// Under the hood we use the two-adic Fast Fourier Transform algorithm ([`Self::fft2`]). The
     /// polynomial's coefficient list is zero-padded to the next power of two before the transform
     /// is applied.
     ///
@@ -251,7 +252,8 @@ impl<F: PrimeField> Polynomial<F> {
 
     /// Removes any trailing null coefficients.
     ///
-    /// After this call, `len()` is guaranteed to reflect the actual degree bound of the polynomial:
+    /// After this call, [`Self::len()`] is guaranteed to reflect the actual degree bound of the
+    /// polynomial:
     ///
     ///   poly.trim();
     ///   assert_eq!(poly.len(), poly.degree_bound());
@@ -323,7 +325,7 @@ impl<F: PrimeField> Polynomial<F> {
         result
     }
 
-    /// Internal implementation of `multiply_many`.
+    /// Internal implementation of [`Self::multiply_many`].
     fn multiply_many_impl(polynomials: &mut [Self]) -> Self {
         match polynomials.len() {
             0 => Polynomial {
@@ -361,7 +363,7 @@ impl<F: PrimeField> Polynomial<F> {
     /// implied evaluation domain is the set of powers of an `n`-th root of unity.
     ///
     /// The returned polynomial is also on the value domain and can be switched to the coefficient
-    /// domain by constructing a `Polynomial` object on it (see `encode2`).
+    /// domain by constructing a [`Polynomial`] object on it (see [`Self::encode2`]).
     pub fn multiply_values2(mut lhs: Vec<F>, mut rhs: Vec<F>) -> Vec<F> {
         let n = lhs.len();
         assert!(n.is_power_of_two());
@@ -451,7 +453,7 @@ impl<F: PrimeField> Polynomial<F> {
     ///
     /// Running time: O(N).
     ///
-    /// NOTE: the returned value is the same as the remainder value returned by the `horner`
+    /// NOTE: the returned value is the same as the remainder value returned by the [`Self::horner`]
     /// algorithm above. Even though the two algorithms have the same asymptotic running time, this
     /// one is faster because it doesn't allocate memory for the quotient polynomial.
     pub fn evaluate(&self, x: F) -> F {
@@ -462,10 +464,10 @@ impl<F: PrimeField> Polynomial<F> {
         y
     }
 
-    /// Returns the X coordinate of the i-th element of a list encoded with `encode2`.
+    /// Returns the X coordinate of the i-th element of a list encoded with [`Self::encode2`].
     ///
-    /// The returned value is suitable for use with `evaluate` to query the original value from the
-    /// encoded list.
+    /// The returned value is suitable for use with [`Self::evaluate`] to query the original value
+    /// from the encoded list.
     ///
     /// `domain_size` is the length of the original list. It will be rounded up to the next power of
     /// two automatically.
@@ -476,7 +478,8 @@ impl<F: PrimeField> Polynomial<F> {
         omega.pow_small(index)
     }
 
-    /// Returns the X coordinate of the i-th point in the coset LDE domain used by `shifted_lde2`.
+    /// Returns the X coordinate of the i-th point in the coset LDE domain used by
+    /// [`Self::shifted_lde2`].
     ///
     /// Equivalent to `F::MULTIPLICATIVE_GENERATOR * domain_element2(index, domain_size)`.
     ///
@@ -622,15 +625,15 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     ///
     /// The returned polynomial evaluates to the provided values at certain powers of the
     /// `F::THREE_ADIC_ROOT_OF_UNITY`. The exact coordinates can be retrieved by calling
-    /// `domain_element3` with the index of the value to query and the size of the domain (i.e.
-    /// `values.len()`).
+    /// [`Self::domain_element3`] with the index of the value to query and the size of the domain
+    /// (i.e. `values.len()`).
     ///
     /// NOTE: this function is called `encode3` because it uses the three-adic evaluation domain.
-    /// For the two-adic version see `encode2` above.
+    /// For the two-adic version see [`Self::encode2`] above.
     ///
-    /// Under the hood we use the three-adic Inverse Fourier Transform algorithm (`ifft3`), which
-    /// requires the size of the list to be a power of three. If that's not the case, this function
-    /// will automatically pad the provided list with zeros.
+    /// Under the hood we use the three-adic Inverse Fourier Transform algorithm ([`Self::ifft3`]),
+    /// which requires the size of the list to be a power of three. If that's not the case, this
+    /// function will automatically pad the provided list with zeros.
     ///
     /// Additionally, the provided list must not exceed the FFT capacity so it's required to have no
     /// more than 3^(F::T) elements.
@@ -650,13 +653,13 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         polynomial
     }
 
-    /// Recovers the ordered list of values encoded by `encode3`.
+    /// Recovers the ordered list of values encoded by [`Self::encode3`].
     ///
-    /// This is the inverse of `encode3`: given a polynomial produced by `encode3(values)`, calling
-    /// `decode3` returns a list equal to `values` (possibly padded with trailing zeros to the next
-    /// power of three).
+    /// This is the inverse of [`Self::encode3`]: given a polynomial produced by `encode3(values)`,
+    /// calling `decode3` returns a list equal to `values` (possibly padded with trailing zeros to
+    /// the next power of three).
     ///
-    /// Under the hood we use the three-adic Fast Fourier Transform algorithm (`fft3`). The
+    /// Under the hood we use the three-adic Fast Fourier Transform algorithm ([`Self::fft3`]). The
     /// polynomial's coefficient list is zero-padded to the next power of three before the transform
     /// is applied.
     ///
@@ -670,10 +673,10 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         data
     }
 
-    /// Returns the X coordinate of the i-th element of a list encoded with `encode3`.
+    /// Returns the X coordinate of the i-th element of a list encoded with [`Self::encode3`].
     ///
-    /// The returned value is suitable for use with `evaluate` to query the original value from the
-    /// encoded list.
+    /// The returned value is suitable for use with [`Self::evaluate`] to query the original value
+    /// from the encoded list.
     ///
     /// `domain_size` is the length of the original list. It will be rounded up to the next power of
     /// three automatically.
@@ -684,7 +687,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         omega.pow_small(index)
     }
 
-    /// Returns the X coordinate of the i-th point in the coset LDE domain used by `shifted_lde3`.
+    /// Returns the X coordinate of the i-th point in the coset LDE domain used by
+    /// [`Self::shifted_lde3`].
     ///
     /// Equivalent to `F::MULTIPLICATIVE_GENERATOR * domain_element3(index, domain_size)`.
     ///
@@ -761,7 +765,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     /// The implied evaluation domain is the set of powers of an `n`-th root of unity.
     ///
     /// The returned polynomial is also on the value domain and can be switched to the coefficient
-    /// domain by constructing a `Polynomial` object on it (see `encode3`).
+    /// domain by constructing a [`Polynomial`] object on it (see [`Self::encode3`]).
     pub fn multiply_values3(mut lhs: Vec<F>, mut rhs: Vec<F>) -> Vec<F> {
         let n = lhs.len();
         assert!(utils::is_power_of_three(n));
