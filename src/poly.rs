@@ -974,15 +974,10 @@ impl<F: PrimeField> MulAssign<Polynomial<F>> for Polynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use starkom_bluesky::Scalar;
+    use starkom_bluesky::{Scalar, from_const};
     use starkom_ff::Field;
 
     type Polynomial = super::Polynomial<Scalar>;
-
-    #[inline(always)]
-    const fn from_const(value: u64) -> Scalar {
-        Scalar::from_const(value)
-    }
 
     #[inline(always)]
     fn get_random_scalar() -> Scalar {
