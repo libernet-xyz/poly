@@ -464,21 +464,29 @@ impl<F: PrimeField> Polynomial<F> {
         y
     }
 
-    /// Converts this polynomial `P(X)` to `P(g*X)`, where `g` is [`F::MULTIPLICATIVE_GENERATOR`].
-    ///
-    /// This effectively shifts the evaluation domain and is used in FRI and similar algorithms to
-    /// preserve secrecy of the values at the original locations while querying the polynomial on
-    /// the shifted domain.
+    /// Converts this polynomial `P(X)` to `P(shift * X)`, effectively shifting the evaluation
+    /// domain.
     ///
     /// Running time: O(N).
-    pub fn shift_domain(self) -> Self {
+    pub fn shift_domain_by(self, shift: F) -> Self {
         let mut coefficients = self.coefficients;
         let mut shift_pow = F::ONE;
         for c in coefficients.iter_mut() {
             *c *= shift_pow;
-            shift_pow *= F::MULTIPLICATIVE_GENERATOR;
+            shift_pow *= shift;
         }
         Self { coefficients }
+    }
+
+    /// Converts this polynomial `P(X)` to `P(g * X)`, where `g` is [`F::MULTIPLICATIVE_GENERATOR`].
+    ///
+    /// The choice of the multiplicative generator prevents collisions between the old and new
+    /// locations, so this shift can be used in FRI and similar algorithms to preserve secrecy of
+    /// the values at the original locations while querying the polynomial on the shifted domain.
+    ///
+    /// Running time: O(N).
+    pub fn shift_domain(self) -> Self {
+        self.shift_domain_by(F::MULTIPLICATIVE_GENERATOR)
     }
 
     /// Returns the X coordinate of the i-th element of a list encoded with [`Self::encode2`].
@@ -975,7 +983,7 @@ impl<F: PrimeField> MulAssign<Polynomial<F>> for Polynomial<F> {
 #[cfg(test)]
 mod tests {
     use starkom_bluesky::{Scalar, from_const};
-    use starkom_ff::Field;
+    use starkom_ff::{Field, PrimeField};
 
     type Polynomial = super::Polynomial<Scalar>;
 
@@ -2559,7 +2567,35 @@ mod tests {
     }
 
     #[test]
-    fn test_shift_domain2() {
+    fn test_shift_domain2_1() {
+        let values = vec![
+            from_const(12),
+            from_const(34),
+            from_const(56),
+            from_const(78),
+        ];
+        let p = Polynomial::encode2(values);
+        let shifted = p.clone().shift_domain_by(Scalar::MULTIPLICATIVE_GENERATOR);
+        assert_eq!(
+            shifted.evaluate_on_two_adic_domain(0, 4),
+            p.evaluate_on_two_adic_coset(0, 4)
+        );
+        assert_eq!(
+            shifted.evaluate_on_two_adic_domain(1, 4),
+            p.evaluate_on_two_adic_coset(1, 4)
+        );
+        assert_eq!(
+            shifted.evaluate_on_two_adic_domain(2, 4),
+            p.evaluate_on_two_adic_coset(2, 4)
+        );
+        assert_eq!(
+            shifted.evaluate_on_two_adic_domain(3, 4),
+            p.evaluate_on_two_adic_coset(3, 4)
+        );
+    }
+
+    #[test]
+    fn test_shift_domain2_2() {
         let values = vec![
             from_const(12),
             from_const(34),
@@ -2590,7 +2626,7 @@ mod tests {
     fn test_shift_domain3() {
         let values = vec![from_const(12), from_const(34), from_const(56)];
         let p = Polynomial::encode3(values);
-        let shifted = p.clone().shift_domain();
+        let shifted = p.clone().shift_domain_by(Scalar::MULTIPLICATIVE_GENERATOR);
         assert_eq!(
             shifted.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_coset(0, 3)
