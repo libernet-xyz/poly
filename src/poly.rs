@@ -331,16 +331,10 @@ impl<F: PrimeField> Polynomial<F> {
         Polynomial { coefficients: lhs }.trim()
     }
 
-    /// Multiplies two or more polynomials, returning an error if the FFT capacity is exceeded --
-    /// that is, if the degree of the product is greater than or equal to `2^(F::S)`.
-    pub fn multiply_many<const N: usize>(polynomials: [Self; N]) -> Self {
-        let n = (polynomials
-            .iter()
-            .map(|polynomial| std::cmp::max(polynomial.len(), 1))
-            .sum::<usize>()
-            - N
-            + 1)
-        .next_power_of_two();
+    /// Internal implementation of [`Self::multiply_batch`] and [`Self::multiply_fixed_batch`].
+    ///
+    /// `n` must be the degree bound of the product.
+    fn multiply_batch_impl(polynomials: impl IntoIterator<Item = Self>, n: usize) -> Self {
         let mut data = vec![F::ONE; n];
         let omega = Self::two_adic_root_of_unity(n);
         polynomials.into_iter().for_each(|polynomial| {
@@ -353,6 +347,35 @@ impl<F: PrimeField> Polynomial<F> {
         });
         Self::ifft2(data.as_mut_slice(), omega);
         Polynomial { coefficients: data }.trim()
+    }
+
+    /// Multiplies a fixed number of polynomials together, returning an error if the FFT capacity is
+    /// exceeded -- that is, if the degree bound of the product is greater than or equal to
+    /// `2^(F::S)`.
+    pub fn multiply_batch(polynomials: Vec<Self>) -> Self {
+        let count = polynomials.len();
+        let n = (polynomials
+            .iter()
+            .map(|polynomial| std::cmp::max(polynomial.len(), 1))
+            .sum::<usize>()
+            - count
+            + 1)
+        .next_power_of_two();
+        Self::multiply_batch_impl(polynomials, n)
+    }
+
+    /// Multiplies an arbitrary number of polynomials together, returning an error if the FFT
+    /// capacity is exceeded -- that is, if the degree bound of the product is greater than or equal
+    /// to `2^(F::S)`.
+    pub fn multiply_fixed_batch<const N: usize>(polynomials: [Self; N]) -> Self {
+        let n = (polynomials
+            .iter()
+            .map(|polynomial| std::cmp::max(polynomial.len(), 1))
+            .sum::<usize>()
+            - N
+            + 1)
+        .next_power_of_two();
+        Self::multiply_batch_impl(polynomials, n)
     }
 
     /// Multiplies two polynomials defined on the value domain, assuming the provided evaluations
@@ -2376,7 +2399,7 @@ mod tests {
     #[test]
     fn test_multiply_no_polynomials() {
         assert_eq!(
-            Polynomial::multiply_many([]),
+            Polynomial::multiply_batch(vec![]),
             Polynomial::default() + Scalar::ONE
         );
     }
@@ -2386,7 +2409,7 @@ mod tests {
         let p = Polynomial {
             coefficients: vec![from_const(12), from_const(34)],
         };
-        assert_eq!(Polynomial::multiply_many([p.clone()]), p);
+        assert_eq!(Polynomial::multiply_batch(vec![p.clone()]), p);
     }
 
     #[test]
@@ -2405,8 +2428,11 @@ mod tests {
                 from_const(10),
             ],
         };
-        assert_eq!(Polynomial::multiply_many([p1.clone(), p2.clone()]), result);
-        assert_eq!(Polynomial::multiply_many([p2, p1]), result);
+        assert_eq!(
+            Polynomial::multiply_batch(vec![p1.clone(), p2.clone()]),
+            result
+        );
+        assert_eq!(Polynomial::multiply_batch(vec![p2, p1]), result);
     }
 
     #[test]
@@ -2432,27 +2458,27 @@ mod tests {
             ],
         };
         assert_eq!(
-            Polynomial::multiply_many([p1.clone(), p2.clone(), p3.clone()]),
+            Polynomial::multiply_batch(vec![p1.clone(), p2.clone(), p3.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p1.clone(), p3.clone(), p2.clone()]),
+            Polynomial::multiply_batch(vec![p1.clone(), p3.clone(), p2.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p2.clone(), p1.clone(), p3.clone()]),
+            Polynomial::multiply_batch(vec![p2.clone(), p1.clone(), p3.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p2.clone(), p3.clone(), p1.clone()]),
+            Polynomial::multiply_batch(vec![p2.clone(), p3.clone(), p1.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p3.clone(), p1.clone(), p2.clone()]),
+            Polynomial::multiply_batch(vec![p3.clone(), p1.clone(), p2.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p3.clone(), p2.clone(), p1.clone()]),
+            Polynomial::multiply_batch(vec![p3.clone(), p2.clone(), p1.clone()]),
             result
         );
     }
@@ -2481,19 +2507,148 @@ mod tests {
             ],
         };
         assert_eq!(
-            Polynomial::multiply_many([p1.clone(), p2.clone(), p3.clone(), p4.clone()]),
+            Polynomial::multiply_batch(vec![p1.clone(), p2.clone(), p3.clone(), p4.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p1.clone(), p2.clone(), p4.clone(), p3.clone()]),
+            Polynomial::multiply_batch(vec![p1.clone(), p2.clone(), p4.clone(), p3.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p1.clone(), p3.clone(), p2.clone(), p4.clone()]),
+            Polynomial::multiply_batch(vec![p1.clone(), p3.clone(), p2.clone(), p4.clone()]),
             result
         );
         assert_eq!(
-            Polynomial::multiply_many([p1.clone(), p3.clone(), p4.clone(), p2.clone()]),
+            Polynomial::multiply_batch(vec![p1.clone(), p3.clone(), p4.clone(), p2.clone()]),
+            result
+        );
+        // okay, not gonna try all permutations -- too much typing for too little gain.
+    }
+
+    #[test]
+    fn test_multiply_empty_fixed_batch() {
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([]),
+            Polynomial::default() + Scalar::ONE
+        );
+    }
+
+    #[test]
+    fn test_multiply_fixed_batch_one() {
+        let p = Polynomial {
+            coefficients: vec![from_const(12), from_const(34)],
+        };
+        assert_eq!(Polynomial::multiply_fixed_batch([p.clone()]), p);
+    }
+
+    #[test]
+    fn test_multiply_fixed_batch_two() {
+        let p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+        };
+        let result = Polynomial {
+            coefficients: vec![
+                from_const(3),
+                from_const(10),
+                from_const(13),
+                from_const(10),
+            ],
+        };
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p1.clone(), p2.clone()]),
+            result
+        );
+        assert_eq!(Polynomial::multiply_fixed_batch([p2, p1]), result);
+    }
+
+    #[test]
+    fn test_multiply_fixed_batch_three() {
+        let p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+        };
+        let p3 = Polynomial {
+            coefficients: vec![from_const(6), from_const(7), from_const(8), from_const(9)],
+        };
+        let result = Polynomial {
+            coefficients: vec![
+                from_const(18),
+                from_const(81),
+                from_const(172),
+                from_const(258),
+                from_const(264),
+                from_const(197),
+                from_const(90),
+            ],
+        };
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p1.clone(), p2.clone(), p3.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p1.clone(), p3.clone(), p2.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p2.clone(), p1.clone(), p3.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p2.clone(), p3.clone(), p1.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p3.clone(), p1.clone(), p2.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p3.clone(), p2.clone(), p1.clone()]),
+            result
+        );
+    }
+
+    #[test]
+    fn test_multiply_fixed_batch_four() {
+        let p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4)],
+        };
+        let p3 = Polynomial {
+            coefficients: vec![from_const(5), from_const(6)],
+        };
+        let p4 = Polynomial {
+            coefficients: vec![from_const(7), from_const(8)],
+        };
+        let result = Polynomial {
+            coefficients: vec![
+                from_const(105),
+                from_const(596),
+                from_const(1244),
+                from_const(1136),
+                from_const(384),
+            ],
+        };
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p1.clone(), p2.clone(), p3.clone(), p4.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p1.clone(), p2.clone(), p4.clone(), p3.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p1.clone(), p3.clone(), p2.clone(), p4.clone()]),
+            result
+        );
+        assert_eq!(
+            Polynomial::multiply_fixed_batch([p1.clone(), p3.clone(), p4.clone(), p2.clone()]),
             result
         );
         // okay, not gonna try all permutations -- too much typing for too little gain.
