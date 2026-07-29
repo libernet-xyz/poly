@@ -345,7 +345,7 @@ impl<F: PrimeField> Polynomial<F> {
         .next_power_of_two();
         let mut data = vec![F::ONE; n];
         let omega = Self::two_adic_root_of_unity(n);
-        polynomials.into_iter().for_each(|polynomial| {
+        for polynomial in polynomials {
             let m = polynomial.len();
             assert!(n >= m);
             let mut values = vec![F::ZERO; n];
@@ -354,7 +354,7 @@ impl<F: PrimeField> Polynomial<F> {
             for i in 0..n {
                 data[i] *= values[i];
             }
-        });
+        }
         Self::ifft2(data.as_mut_slice(), omega);
         Polynomial { coefficients: data }.trim()
     }
