@@ -334,18 +334,22 @@ impl<F: PrimeField> Polynomial<F> {
     /// Multiplies an arbitrary number of polynomials together, returning an error if the FFT
     /// capacity is exceeded -- that is, if the degree bound of the product is greater than or equal
     /// to `2^(F::S)`.
-    pub fn multiply_batch(polynomials: &[Self]) -> Self {
-        let count = polynomials.len();
-        let n = (polynomials
-            .iter()
-            .map(|polynomial| std::cmp::max(polynomial.len(), 1))
-            .sum::<usize>()
-            - count
-            + 1)
-        .next_power_of_two();
+    pub fn multiply_batch<'a, I: IntoIterator<Item = &'a Self>>(polynomials: I) -> Self
+    where
+        I::IntoIter: Clone,
+    {
+        let iter = polynomials.into_iter();
+        let n = {
+            let (count, total) =
+                iter.clone()
+                    .fold((0usize, 0usize), |(count, total), polynomial| {
+                        (count + 1, total + std::cmp::max(polynomial.len(), 1))
+                    });
+            (total - count + 1).next_power_of_two()
+        };
         let mut data = vec![F::ONE; n];
         let omega = Self::two_adic_root_of_unity(n);
-        for polynomial in polynomials {
+        for polynomial in iter {
             let m = polynomial.len();
             assert!(n >= m);
             let mut values = vec![F::ZERO; n];
