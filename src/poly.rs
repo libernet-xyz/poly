@@ -17,7 +17,7 @@ fn make_lagrange0<F: PrimeField>(n: usize) -> Polynomial<F> {
     let zero = Polynomial { coefficients };
     let (quotient, remainder) = zero.horner(F::ONE);
     assert_eq!(remainder, F::ZERO);
-    quotient * F::try_from(n).unwrap().invert().into_option().unwrap()
+    quotient * F::try_from(n).unwrap().invert_unwrap()
 }
 
 /// A polynomial expressed as an array of scalar coefficients in ascending degree order (i.e. the
@@ -153,8 +153,8 @@ impl<F: PrimeField> Polynomial<F> {
     ///
     /// Running time: O(N*logN).
     fn ifft2(data: &mut [F], omega: F) {
-        Self::fft2(data, omega.invert().into_option().unwrap());
-        let n_inv = F::try_from(data.len()).unwrap().invert().unwrap();
+        Self::fft2(data, omega.invert_unwrap());
+        let n_inv = F::try_from(data.len()).unwrap().invert_unwrap();
         for v in data.iter_mut() {
             *v *= n_inv;
         }
@@ -191,14 +191,15 @@ impl<F: PrimeField> Polynomial<F> {
         assert!(!values.is_empty());
         let n = values.len().next_power_of_two();
         assert!(n.trailing_zeros() as usize <= F::S);
-        values.resize(n, F::ZERO);
+        if n != values.len() {
+            values.resize(n, F::ZERO);
+        }
         let omega = Self::two_adic_root_of_unity(values.len());
         Self::ifft2(values.as_mut_slice(), omega);
-        let mut polynomial = Polynomial {
+        Polynomial {
             coefficients: values,
-        };
-        polynomial.trim();
-        polynomial
+        }
+        .trim()
     }
 
     /// Recovers the ordered list of values encoded by [`Self::encode2`].
@@ -215,7 +216,9 @@ impl<F: PrimeField> Polynomial<F> {
     pub fn decode2(self) -> Vec<F> {
         let mut data = self.coefficients;
         let n = data.len().next_power_of_two();
-        data.resize(n, F::ZERO);
+        if n != data.len() {
+            data.resize(n, F::ZERO);
+        }
         let omega = Self::two_adic_root_of_unity(n);
         Self::fft2(&mut data, omega);
         data
@@ -255,9 +258,10 @@ impl<F: PrimeField> Polynomial<F> {
     /// After this call, [`Self::len()`] is guaranteed to reflect the actual degree bound of the
     /// polynomial:
     ///
-    ///   poly.trim();
-    ///   assert_eq!(poly.len(), poly.degree_bound());
-    pub fn trim(&mut self) {
+    /// ```ignore
+    /// assert_eq!(poly.trim().len(), poly.degree_bound());
+    /// ```
+    pub fn trim(mut self) -> Self {
         if let Some(i) = self
             .coefficients
             .iter()
@@ -267,13 +271,16 @@ impl<F: PrimeField> Polynomial<F> {
         } else {
             self.coefficients.clear();
         }
+        self
     }
 
     /// Pads the polynomial with null coefficients until the degree bound is at least
     /// `degree_bound`.
-    pub fn pad(&mut self, min_degree_bound: usize) {
-        let new_length = std::cmp::max(min_degree_bound, self.coefficients.len());
-        self.coefficients.resize(new_length, F::ZERO);
+    pub fn pad(mut self, min_degree_bound: usize) -> Self {
+        if min_degree_bound > self.coefficients.len() {
+            self.coefficients.resize(min_degree_bound, F::ZERO);
+        }
+        self
     }
 
     /// Extracts the array of coefficients from this polynomial.
@@ -287,8 +294,8 @@ impl<F: PrimeField> Polynomial<F> {
     /// Multiplies two polynomials. Panics if the FFT capacity is exceeded -- that is, if the degree
     /// of the product is greater than or equal to 2^(F::S).
     pub fn multiply(mut self, mut other: Self) -> Self {
-        self.trim();
-        other.trim();
+        self = self.trim();
+        other = other.trim();
 
         let mut lhs = self.coefficients;
         let mut rhs = other.coefficients;
@@ -320,50 +327,41 @@ impl<F: PrimeField> Polynomial<F> {
 
         Self::ifft2(lhs.as_mut_slice(), omega);
 
-        let mut result = Polynomial { coefficients: lhs };
-        result.trim();
-        result
-    }
-
-    /// Internal implementation of [`Self::multiply_many`].
-    fn multiply_many_impl(polynomials: &mut [Self]) -> Self {
-        match polynomials.len() {
-            0 => Polynomial {
-                coefficients: vec![],
-            },
-            1 => std::mem::take(&mut polynomials[0]),
-            2 => {
-                let lhs = std::mem::take(&mut polynomials[0]);
-                let rhs = std::mem::take(&mut polynomials[1]);
-                lhs.multiply(rhs)
-            }
-            n => {
-                let (left, right) = polynomials.split_at_mut(n / 2);
-                let left = Self::multiply_many_impl(left);
-                let right = Self::multiply_many_impl(right);
-                left.multiply(right)
-            }
-        }
+        Polynomial { coefficients: lhs }.trim()
     }
 
     /// Multiplies two or more polynomials, returning an error if the FFT capacity is exceeded --
-    /// that is, if the degree of the product is greater than or equal to 2^(F::S).
-    ///
-    /// REQUIRES: the `polynomials` array must have at least 1 element, otherwise the function will
-    /// panic.
-    pub fn multiply_many<const N: usize>(mut polynomials: [Self; N]) -> Self {
-        assert!(N > 0);
-        Self::multiply_many_impl(&mut polynomials)
+    /// that is, if the degree of the product is greater than or equal to `2^(F::S)`.
+    pub fn multiply_many<const N: usize>(polynomials: [Self; N]) -> Self {
+        let n = (polynomials
+            .iter()
+            .map(|polynomial| std::cmp::max(polynomial.len(), 1))
+            .sum::<usize>()
+            - N
+            + 1)
+        .next_power_of_two();
+        let mut data = vec![F::ONE; n];
+        let omega = Self::two_adic_root_of_unity(n);
+        polynomials.into_iter().for_each(|polynomial| {
+            let mut values = polynomial.take();
+            values.resize(n, F::ZERO);
+            Self::fft2(values.as_mut_slice(), omega);
+            for i in 0..n {
+                data[i] *= values[i];
+            }
+        });
+        Self::ifft2(data.as_mut_slice(), omega);
+        Polynomial { coefficients: data }.trim()
     }
 
     /// Multiplies two polynomials defined on the value domain, assuming the provided evaluations
-    /// are defined on the same two-adic evaluation domain for both.
+    /// are defined on the same two-adic evaluation domain.
     ///
     /// REQUIRES: the LHS and RHS must have the same length `n` and it must be a power of two. The
     /// implied evaluation domain is the set of powers of an `n`-th root of unity.
     ///
     /// The returned polynomial is also on the value domain and can be switched to the coefficient
-    /// domain by constructing a [`Polynomial`] object on it (see [`Self::encode2`]).
+    /// domain by constructing a [`Polynomial`] object with [`Self::encode2`].
     pub fn multiply_values2(mut lhs: Vec<F>, mut rhs: Vec<F>) -> Vec<F> {
         let n = lhs.len();
         assert!(n.is_power_of_two());
@@ -419,8 +417,8 @@ impl<F: PrimeField> Polynomial<F> {
     /// values of `n`, but it's generally most useful when `n` is a power of 2.
     ///
     /// Running time: O(N).
-    pub fn divide_by_zero(&self, n: usize) -> Result<Self> {
-        let mut data = self.coefficients.clone();
+    pub fn divide_by_zero(self, n: usize) -> Result<Self> {
+        let mut data = self.take();
         if data.len() < n {
             data.resize(n, F::ZERO);
         }
@@ -428,9 +426,8 @@ impl<F: PrimeField> Polynomial<F> {
         let degree = data.len() - n;
         let mut quotient = vec![F::ZERO; degree];
 
-        let neg_one = F::ZERO - F::ONE;
         for i in 0..degree {
-            let c = data[i] * neg_one;
+            let c = data[i] * F::MAX;
             quotient[i] = c;
             data[i] += c;
             data[i + n] -= c;
@@ -589,7 +586,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         }
 
         let omega3 = omega.pow_small(n / 3);
-        let omega3_sq = omega3 * omega3;
+        let omega3_square = omega3.square();
 
         let mut m = 1;
         for _ in 0..log_n {
@@ -603,8 +600,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
                     let t1 = w * data[j + m];
                     let t2 = w2 * data[j + 2 * m];
                     data[j] = t0 + t1 + t2;
-                    data[j + m] = t0 + omega3 * t1 + omega3_sq * t2;
-                    data[j + 2 * m] = t0 + omega3_sq * t1 + omega3 * t2;
+                    data[j + m] = t0 + omega3 * t1 + omega3_square * t2;
+                    data[j + 2 * m] = t0 + omega3_square * t1 + omega3 * t2;
                 }
                 w *= wm;
                 w2 = w * w;
@@ -620,8 +617,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     ///
     /// Running time: O(N*logN).
     fn ifft3(data: &mut [F], omega: F) {
-        Self::fft3(data, omega.invert().into_option().unwrap());
-        let n_inv = F::try_from(data.len()).unwrap().invert().unwrap();
+        Self::fft3(data, omega.invert_unwrap());
+        let n_inv = F::try_from(data.len()).unwrap().invert_unwrap();
         for v in data.iter_mut() {
             *v *= n_inv;
         }
@@ -658,14 +655,15 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         assert!(!values.is_empty());
         let n = utils::next_power_of_three(values.len());
         assert!(utils::ilog3(n) <= F::T as usize);
-        values.resize(n, F::ZERO);
+        if n != values.len() {
+            values.resize(n, F::ZERO);
+        }
         let omega = Self::three_adic_root_of_unity(values.len());
         Self::ifft3(values.as_mut_slice(), omega);
-        let mut polynomial = Polynomial {
+        Polynomial {
             coefficients: values,
-        };
-        polynomial.trim();
-        polynomial
+        }
+        .trim()
     }
 
     /// Recovers the ordered list of values encoded by [`Self::encode3`].
@@ -682,7 +680,9 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     pub fn decode3(self) -> Vec<F> {
         let mut data = self.coefficients;
         let n = utils::next_power_of_three(data.len());
-        data.resize(n, F::ZERO);
+        if n != data.len() {
+            data.resize(n, F::ZERO);
+        }
         let omega = Self::three_adic_root_of_unity(n);
         Self::fft3(&mut data, omega);
         data
@@ -733,7 +733,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     /// algorithms.
     ///
     /// REQUIRES: `m` must be a power of three strictly larger than `self.len()`, and no larger than
-    /// `2^(F::T)`.
+    /// `3^(F::T)`.
     ///
     /// Running time: O(M*log(M)).
     pub fn lde3(self, m: usize) -> Vec<F> {
@@ -806,9 +806,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     ///
     /// REQUIRES: `n` must be a power of 2 less than or equal to 2^(F::S).
     ///
-    /// These polynomials are used in the PLONK proving scheme running over BlueSky. BlueSky
-    /// supports at most 62 of these. Computed on first use and cached for the lifetime of the
-    /// program.
+    /// These polynomials are used in the PLONK proving scheme running over BlueSky. They're
+    /// computed on first use and cached for the lifetime of the program.
     pub fn lagrange0(n: usize) -> &'static Self {
         assert!(n.is_power_of_two());
         let k = n.trailing_zeros() as usize;
@@ -1059,7 +1058,7 @@ mod tests {
             from_const(0),
             from_const(0),
         ]);
-        p.trim();
+        p = p.trim();
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
     }
@@ -1073,7 +1072,7 @@ mod tests {
             from_const(34),
             from_const(56),
         ]);
-        p.trim();
+        p = p.trim();
         assert_eq!(p.len(), 5);
         assert_eq!(p.degree_bound(), 5);
     }
@@ -1082,7 +1081,7 @@ mod tests {
     fn test_trim_all_zero() {
         let mut p =
             Polynomial::with_coefficients(vec![from_const(0), from_const(0), from_const(0)]);
-        p.trim();
+        p = p.trim();
         assert_eq!(p.len(), p.degree_bound());
         assert_eq!(p, Polynomial::default());
     }
@@ -1090,7 +1089,7 @@ mod tests {
     #[test]
     fn test_pad_extends() {
         let mut p = Polynomial::with_coefficients(vec![from_const(12), from_const(34)]);
-        p.pad(5);
+        p = p.pad(5);
         assert_eq!(p.len(), 5);
         assert_eq!(
             p.take(),
@@ -1108,7 +1107,7 @@ mod tests {
     fn test_pad_exact() {
         let mut p =
             Polynomial::with_coefficients(vec![from_const(12), from_const(34), from_const(56)]);
-        p.pad(3);
+        p = p.pad(3);
         assert_eq!(p.len(), 3);
         assert_eq!(
             p.take(),
@@ -1124,7 +1123,7 @@ mod tests {
             from_const(56),
             from_const(78),
         ]);
-        p.pad(2);
+        p = p.pad(2);
         assert_eq!(p.len(), 4);
         assert_eq!(
             p.take(),
@@ -1140,7 +1139,7 @@ mod tests {
     #[test]
     fn test_pad_empty() {
         let mut p = Polynomial::default();
-        p.pad(3);
+        p = p.pad(3);
         assert_eq!(p.len(), 3);
         assert_eq!(p.take(), vec![from_const(0), from_const(0), from_const(0)]);
     }
@@ -1148,7 +1147,7 @@ mod tests {
     #[test]
     fn test_pad_zero_bound() {
         let mut p = Polynomial::with_coefficients(vec![from_const(12), from_const(34)]);
-        p.pad(0);
+        p = p.pad(0);
         assert_eq!(p.len(), 2);
         assert_eq!(p.take(), vec![from_const(12), from_const(34)]);
     }
@@ -1158,7 +1157,7 @@ mod tests {
         let mut p =
             Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         let before = p.evaluate(from_const(7));
-        p.pad(6);
+        p = p.pad(6);
         assert_eq!(p.evaluate(from_const(7)), before);
     }
 
@@ -2332,6 +2331,14 @@ mod tests {
                     from_const(10)
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn test_multiply_no_polynomials() {
+        assert_eq!(
+            Polynomial::multiply_many([]),
+            Polynomial::default() + Scalar::ONE
         );
     }
 

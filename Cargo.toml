@@ -1,6 +1,6 @@
 [package]
 name = "starkom-poly"
-version = "3.1.0"
+version = "4.0.0"
 description = "Algorithms over polynomials used in Starkom (NTT, Lagrange interpolation, etc.)."
 license = "Apache-2.0"
 repository = "https://github.com/libernet-xyz/poly.git"
@@ -12,5 +12,5 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 anyhow = "1.0.103"
-starkom-bluesky = { version = "3.2.0" }
+starkom-bluesky = "3.2.0"
 starkom-ff = "2.3.0"
