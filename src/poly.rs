@@ -412,13 +412,18 @@ impl<F: PrimeField> Polynomial<F> {
     ///
     /// Note that (x^n - 1) is a polynomial that evaluates to zero across an evaluation domain of
     /// size `n`, because the roots of it are the n-th roots of unity. We call this the "zero
-    /// polynomial".
+    /// polynomial", hence the "divide by zero" terminology.
     ///
-    /// NOTE: this algorithm doesn't check that `n` is a power of 2 and will work with arbitrary
-    /// values of `n`, but it's generally most useful when `n` is a power of 2.
+    /// REQUIRES: `n` must be strictly greater than 0.
+    ///
+    /// NOTE: this algorithm doesn't check that `n` is a power of 2 or 3 and will work with
+    /// arbitrary values of `n`, but it's generally most useful when `n` is a power of 2 (for the
+    /// two-adic evaluation domain) or 3 (for the three-adic one).
     ///
     /// Running time: O(N).
     pub fn divide_by_zero(self, n: usize) -> Result<Self> {
+        assert!(n > 0);
+
         let mut data = self.take();
         if data.len() < n {
             data.resize(n, F::ZERO);
@@ -428,9 +433,8 @@ impl<F: PrimeField> Polynomial<F> {
         let mut quotient = vec![F::ZERO; degree];
 
         for i in 0..degree {
-            let c = data[i] * F::MAX;
+            let c = -data[i];
             quotient[i] = c;
-            data[i] += c;
             data[i + n] -= c;
         }
 
@@ -828,8 +832,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         lhs
     }
 
-    /// Returns the Lagrange basis polynomial L0 that activates on the first point of the
-    /// (three-adic) evaluation domain of size `n` and evaluates to 0 over the rest.
+    /// Returns the Lagrange basis polynomial L0 that activates on the first point of the three-adic
+    /// evaluation domain of size `n` and evaluates to 0 over the rest.
     ///
     /// In other words:
     ///
