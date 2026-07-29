@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::{Mutex, OnceLock};
 
-/// Builds the Lagrange basis polynomials returned by [`Polynomial::lagrange0`].
+/// Builds the Lagrange basis polynomials returned by [`Polynomial::lagrange0_2`] and
+/// [`Polynomial::lagrange0_3`].
 ///
 /// Running time: O(N).
 fn make_lagrange0<F: PrimeField>(n: usize) -> Polynomial<F> {
@@ -558,6 +559,39 @@ impl<F: PrimeField> Polynomial<F> {
             .collect();
         Self::with_coefficients(new_coefficients)
     }
+
+    /// Returns the Lagrange basis polynomial L0 that activates on the first point of the two-adic
+    /// evaluation domain of size `n` and evaluates to 0 over the rest.
+    ///
+    /// In other words:
+    ///
+    ///   L0(1) = 1
+    ///   L0(w^i) = 0 for all i such that 0 < i < n
+    ///
+    /// where `w` is an n-th root of unity.
+    ///
+    /// REQUIRES: `n` must be a power of 2 less than or equal to `2^(F::S)`.
+    ///
+    /// These polynomials are used in the PLONK proving scheme running over BlueSky. They're
+    /// computed on first use and cached for the lifetime of the program.
+    pub fn lagrange0_2(n: usize) -> &'static Self {
+        assert!(n.is_power_of_two());
+        let k = n.trailing_zeros() as usize;
+        assert!(k <= F::S);
+
+        static CACHE: OnceLock<Mutex<BTreeMap<(TypeId, usize), &'static (dyn Any + Send + Sync)>>> =
+            OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+
+        let polynomial = {
+            let mut map = cache.lock().unwrap();
+            *map.entry((TypeId::of::<F>(), k)).or_insert_with(|| {
+                Box::leak(Box::new(make_lagrange0::<F>(1 << k))) as &'static (dyn Any + Send + Sync)
+            })
+        };
+
+        polynomial.downcast_ref::<Polynomial<F>>().unwrap()
+    }
 }
 
 impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
@@ -794,24 +828,24 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         lhs
     }
 
-    /// Returns the Lagrange basis polynomial L0 that activates on the first point of the evaluation
-    /// domain of size `n` and evaluates to 0 over the rest.
+    /// Returns the Lagrange basis polynomial L0 that activates on the first point of the
+    /// (three-adic) evaluation domain of size `n` and evaluates to 0 over the rest.
     ///
     /// In other words:
     ///
     ///   L0(1) = 1
-    ///   L0(w^i) = 0 for all i != 0, i < n
+    ///   L0(w^i) = 0 for all i such that 0 < i < n
     ///
     /// where `w` is an n-th root of unity.
     ///
-    /// REQUIRES: `n` must be a power of 2 less than or equal to 2^(F::S).
+    /// REQUIRES: `n` must be a power of 3 less than or equal to `3^(F::T)`.
     ///
     /// These polynomials are used in the PLONK proving scheme running over BlueSky. They're
     /// computed on first use and cached for the lifetime of the program.
-    pub fn lagrange0(n: usize) -> &'static Self {
-        assert!(n.is_power_of_two());
-        let k = n.trailing_zeros() as usize;
-        assert!(k <= F::S);
+    pub fn lagrange0_3(n: usize) -> &'static Self {
+        assert!(utils::is_power_of_three(n));
+        let k = utils::ilog3(n);
+        assert!(k <= (F::T as usize));
 
         static CACHE: OnceLock<Mutex<BTreeMap<(TypeId, usize), &'static (dyn Any + Send + Sync)>>> =
             OnceLock::new();
@@ -820,7 +854,8 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
         let polynomial = {
             let mut map = cache.lock().unwrap();
             *map.entry((TypeId::of::<F>(), k)).or_insert_with(|| {
-                Box::leak(Box::new(make_lagrange0::<F>(1 << k))) as &'static (dyn Any + Send + Sync)
+                Box::leak(Box::new(make_lagrange0::<F>(3usize.pow(k as u32))))
+                    as &'static (dyn Any + Send + Sync)
             })
         };
 
@@ -3233,26 +3268,26 @@ mod tests {
     }
 
     #[test]
-    fn test_lagrange0_1() {
+    fn test_lagrange0_two_adic_1() {
         let n = 1;
-        let l0 = Polynomial::lagrange0(n);
+        let l0 = Polynomial::lagrange0_2(n);
         assert_eq!(l0.evaluate(from_const(1)), from_const(1));
     }
 
     #[test]
-    fn test_lagrange0_2() {
+    fn test_lagrange0_two_adic_2() {
         let n = 2;
         let omega = Polynomial::domain_element2(1, n);
-        let l0 = Polynomial::lagrange0(n);
+        let l0 = Polynomial::lagrange0_2(n);
         assert_eq!(l0.evaluate(from_const(1)), from_const(1));
         assert_eq!(l0.evaluate(omega), from_const(0));
     }
 
     #[test]
-    fn test_lagrange0_4() {
+    fn test_lagrange0_two_adic_4() {
         let n = 4;
         let omega = Polynomial::domain_element2(1, n);
-        let l0 = Polynomial::lagrange0(n);
+        let l0 = Polynomial::lagrange0_2(n);
         assert_eq!(l0.evaluate(from_const(1)), from_const(1));
         assert_eq!(l0.evaluate(omega), from_const(0));
         assert_eq!(l0.evaluate(omega.square()), from_const(0));
@@ -3260,10 +3295,10 @@ mod tests {
     }
 
     #[test]
-    fn test_lagrange0_8() {
+    fn test_lagrange0_two_adic_8() {
         let n = 8;
         let omega = Polynomial::domain_element2(1, n);
-        let l0 = Polynomial::lagrange0(n);
+        let l0 = Polynomial::lagrange0_2(n);
         assert_eq!(l0.evaluate(from_const(1)), from_const(1));
         assert_eq!(l0.evaluate(omega), from_const(0));
         assert_eq!(l0.evaluate(omega.pow_small(2)), from_const(0));
@@ -3272,5 +3307,38 @@ mod tests {
         assert_eq!(l0.evaluate(omega.pow_small(5)), from_const(0));
         assert_eq!(l0.evaluate(omega.pow_small(6)), from_const(0));
         assert_eq!(l0.evaluate(omega.pow_small(7)), from_const(0));
+    }
+
+    #[test]
+    fn test_lagrange0_three_adic_1() {
+        let n = 1;
+        let l0 = Polynomial::lagrange0_3(n);
+        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+    }
+
+    #[test]
+    fn test_lagrange0_three_adic_3() {
+        let n = 3;
+        let omega = Polynomial::domain_element3(1, n);
+        let l0 = Polynomial::lagrange0_3(n);
+        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+        assert_eq!(l0.evaluate(omega), from_const(0));
+        assert_eq!(l0.evaluate(omega.square()), from_const(0));
+    }
+
+    #[test]
+    fn test_lagrange0_three_adic_9() {
+        let n = 9;
+        let omega = Polynomial::domain_element3(1, n);
+        let l0 = Polynomial::lagrange0_3(n);
+        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+        assert_eq!(l0.evaluate(omega), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(2)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(3)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(4)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(5)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(6)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(7)), from_const(0));
+        assert_eq!(l0.evaluate(omega.pow_small(8)), from_const(0));
     }
 }
