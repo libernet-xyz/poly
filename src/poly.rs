@@ -4,6 +4,7 @@ use starkom_bluesky::ThreeAdicField;
 use starkom_ff::PrimeField;
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
+use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::{Mutex, OnceLock};
 
@@ -890,10 +891,26 @@ impl<F: PrimeField> Add<Polynomial<F>> for Polynomial<F> {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self::Output {
-        if rhs.len() > self.len() {
+        let len = rhs.len();
+        if len > self.len() {
             return rhs + self;
         }
-        for i in 0..rhs.len() {
+        for i in 0..len {
+            self.coefficients[i] += rhs.coefficients[i];
+        }
+        self
+    }
+}
+
+impl<F: PrimeField> Add<&Polynomial<F>> for Polynomial<F> {
+    type Output = Self;
+
+    fn add(mut self, rhs: &Self) -> Self::Output {
+        let len = rhs.len();
+        if len > self.len() {
+            self.coefficients.resize(len, F::ZERO);
+        }
+        for i in 0..len {
             self.coefficients[i] += rhs.coefficients[i];
         }
         self
@@ -911,6 +928,18 @@ impl<F: PrimeField> AddAssign<Polynomial<F>> for Polynomial<F> {
             for i in 0..rhs.len() {
                 self.coefficients[i] += rhs.coefficients[i];
             }
+        }
+    }
+}
+
+impl<F: PrimeField> AddAssign<&Polynomial<F>> for Polynomial<F> {
+    fn add_assign(&mut self, rhs: &Self) {
+        let len = rhs.len();
+        if len > self.len() {
+            self.coefficients.resize(len, F::ZERO);
+        }
+        for i in 0..len {
+            self.coefficients[i] += rhs.coefficients[i];
         }
     }
 }
@@ -952,6 +981,21 @@ impl<F: PrimeField> Sub<Polynomial<F>> for Polynomial<F> {
     }
 }
 
+impl<F: PrimeField> Sub<&Polynomial<F>> for Polynomial<F> {
+    type Output = Self;
+
+    fn sub(mut self, rhs: &Self) -> Self::Output {
+        let len = rhs.len();
+        if len > self.len() {
+            self.coefficients.resize(len, F::ZERO);
+        }
+        for i in 0..len {
+            self.coefficients[i] -= rhs.coefficients[i];
+        }
+        self
+    }
+}
+
 impl<F: PrimeField> SubAssign<Polynomial<F>> for Polynomial<F> {
     fn sub_assign(&mut self, mut rhs: Self) {
         if rhs.len() > self.len() {
@@ -966,6 +1010,18 @@ impl<F: PrimeField> SubAssign<Polynomial<F>> for Polynomial<F> {
             for i in 0..rhs.len() {
                 self.coefficients[i] -= rhs.coefficients[i];
             }
+        }
+    }
+}
+
+impl<F: PrimeField> SubAssign<&Polynomial<F>> for Polynomial<F> {
+    fn sub_assign(&mut self, rhs: &Self) {
+        let len = rhs.len();
+        if len > self.len() {
+            self.coefficients.resize(len, F::ZERO);
+        }
+        for i in 0..len {
+            self.coefficients[i] -= rhs.coefficients[i];
         }
     }
 }
@@ -1020,9 +1076,49 @@ impl<F: PrimeField> Mul<Polynomial<F>> for Polynomial<F> {
     }
 }
 
+impl<F: PrimeField> Mul<&Polynomial<F>> for Polynomial<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: &Self) -> Self::Output {
+        self.multiply(rhs.clone())
+    }
+}
+
 impl<F: PrimeField> MulAssign<Polynomial<F>> for Polynomial<F> {
     fn mul_assign(&mut self, rhs: Self) {
         *self = std::mem::take(self).multiply(rhs);
+    }
+}
+
+impl<F: PrimeField> MulAssign<&Polynomial<F>> for Polynomial<F> {
+    fn mul_assign(&mut self, rhs: &Self) {
+        *self = std::mem::take(self).multiply(rhs.clone());
+    }
+}
+
+impl<F: PrimeField> Sum<Polynomial<F>> for Polynomial<F> {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Polynomial::default(), |a, b| a + b)
+    }
+}
+
+impl<'a, F: PrimeField> Sum<&'a Polynomial<F>> for Polynomial<F> {
+    fn sum<I: Iterator<Item = &'a Polynomial<F>>>(iter: I) -> Self {
+        iter.fold(Polynomial::default(), |a, b| a + b)
+    }
+}
+
+impl<F: PrimeField> Product<Polynomial<F>> for Polynomial<F> {
+    fn product<I: Iterator<Item = Polynomial<F>>>(iter: I) -> Self {
+        let polynomials = iter.collect::<Vec<_>>();
+        Polynomial::multiply_batch(polynomials.iter())
+    }
+}
+
+impl<'a, F: PrimeField> Product<&'a Polynomial<F>> for Polynomial<F> {
+    fn product<I: Iterator<Item = &'a Polynomial<F>>>(iter: I) -> Self {
+        let polynomials = iter.collect::<Vec<_>>();
+        Polynomial::multiply_batch(polynomials)
     }
 }
 
@@ -2102,6 +2198,46 @@ mod tests {
     }
 
     #[test]
+    fn test_add_ref_same_length() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        assert_eq!(
+            p1 + &p2,
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
+        );
+    }
+
+    #[test]
+    fn test_add_ref_lhs_longer() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        assert_eq!(
+            p1 + &p2,
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
+        );
+    }
+
+    #[test]
+    fn test_add_ref_rhs_longer() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        assert_eq!(
+            p1 + &p2,
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
+        );
+    }
+
+    #[test]
+    fn test_add_ref_consistent_with_add() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        assert_eq!(p1.clone() + &p2, p1 + p2);
+    }
+
+    #[test]
     fn test_add_assign_same_length() {
         let mut p1 =
             Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
@@ -2149,6 +2285,118 @@ mod tests {
     }
 
     #[test]
+    fn test_add_assign_ref_same_length() {
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        p1 += &p2;
+        assert_eq!(
+            p1,
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
+        );
+    }
+
+    #[test]
+    fn test_add_assign_ref_lhs_longer() {
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        p1 += &p2;
+        assert_eq!(
+            p1,
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
+        );
+    }
+
+    #[test]
+    fn test_add_assign_ref_rhs_longer() {
+        let mut p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        p1 += &p2;
+        assert_eq!(
+            p1,
+            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
+        );
+    }
+
+    #[test]
+    fn test_add_assign_ref_consistent_with_add_assign() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p2 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let mut p1_assign_ref = p1.clone();
+        p1_assign_ref += &p2;
+        let mut p1_assign = p1;
+        p1_assign += p2;
+        assert_eq!(p1_assign_ref, p1_assign);
+    }
+
+    #[test]
+    fn test_sum_empty() {
+        let polynomials: Vec<Polynomial> = vec![];
+        assert_eq!(
+            polynomials.into_iter().sum::<Polynomial>(),
+            Polynomial::default()
+        );
+    }
+
+    #[test]
+    fn test_sum_one_polynomial() {
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        assert_eq!(vec![p.clone()].into_iter().sum::<Polynomial>(), p);
+    }
+
+    #[test]
+    fn test_sum_several_polynomials() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p3 = Polynomial::with_coefficients(vec![from_const(100)]);
+        assert_eq!(
+            vec![p1.clone(), p2.clone(), p3.clone()]
+                .into_iter()
+                .sum::<Polynomial>(),
+            p1 + p2 + p3
+        );
+    }
+
+    #[test]
+    fn test_sum_ref_empty() {
+        let polynomials: Vec<Polynomial> = vec![];
+        assert_eq!(
+            polynomials.iter().sum::<Polynomial>(),
+            Polynomial::default()
+        );
+    }
+
+    #[test]
+    fn test_sum_ref_one_polynomial() {
+        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        assert_eq!([p.clone()].iter().sum::<Polynomial>(), p);
+    }
+
+    #[test]
+    fn test_sum_ref_several_polynomials() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p3 = Polynomial::with_coefficients(vec![from_const(100)]);
+        let polynomials = [p1.clone(), p2.clone(), p3.clone()];
+        assert_eq!(polynomials.iter().sum::<Polynomial>(), p1 + p2 + p3);
+    }
+
+    #[test]
+    fn test_sum_ref_consistent_with_sum() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let polynomials = vec![p1, p2];
+        assert_eq!(
+            polynomials.iter().sum::<Polynomial>(),
+            polynomials.into_iter().sum::<Polynomial>()
+        );
+    }
+
+    #[test]
     fn test_sub_same_length() {
         let p1 =
             Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
@@ -2185,6 +2433,45 @@ mod tests {
         let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
         let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
         assert_eq!(p1.clone() - p2.clone(), -(p2 - p1));
+    }
+
+    #[test]
+    fn test_sub_ref_same_length() {
+        let p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        assert_eq!(
+            p1 - &p2,
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
+        );
+    }
+
+    #[test]
+    fn test_sub_ref_lhs_longer() {
+        let p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        assert_eq!(
+            p1 - &p2,
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
+        );
+    }
+
+    #[test]
+    fn test_sub_ref_rhs_longer() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        assert_eq!(
+            p1 - &p2,
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
+        );
+    }
+
+    #[test]
+    fn test_sub_ref_consistent_with_sub() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        assert_eq!(p1.clone() - &p2, p1 - p2);
     }
 
     #[test]
@@ -2229,6 +2516,52 @@ mod tests {
         let mut p1_assign = p1.clone();
         p1_assign -= p2.clone();
         assert_eq!(p1_assign, p1 - p2);
+    }
+
+    #[test]
+    fn test_sub_assign_ref_same_length() {
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        p1 -= &p2;
+        assert_eq!(
+            p1,
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
+        );
+    }
+
+    #[test]
+    fn test_sub_assign_ref_lhs_longer() {
+        let mut p1 =
+            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        p1 -= &p2;
+        assert_eq!(
+            p1,
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
+        );
+    }
+
+    #[test]
+    fn test_sub_assign_ref_rhs_longer() {
+        let mut p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        p1 -= &p2;
+        assert_eq!(
+            p1,
+            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
+        );
+    }
+
+    #[test]
+    fn test_sub_assign_ref_consistent_with_sub_assign() {
+        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let mut p1_assign_ref = p1.clone();
+        p1_assign_ref -= &p2;
+        let mut p1_assign = p1;
+        p1_assign -= p2;
+        assert_eq!(p1_assign_ref, p1_assign);
     }
 
     #[test]
@@ -2360,6 +2693,26 @@ mod tests {
     }
 
     #[test]
+    fn test_polynomial_mul_ref_op() {
+        let p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+        };
+        let result = Polynomial {
+            coefficients: vec![
+                from_const(3),
+                from_const(10),
+                from_const(13),
+                from_const(10),
+            ],
+        };
+        assert_eq!(p1.clone() * &p2, result);
+        assert_eq!(p2 * &p1, result);
+    }
+
+    #[test]
     fn test_polynomial_mul_assign() {
         let mut p1 = Polynomial {
             coefficients: vec![from_const(1), from_const(2)],
@@ -2368,6 +2721,28 @@ mod tests {
             coefficients: vec![from_const(3), from_const(4), from_const(5)],
         };
         p1 *= p2;
+        assert_eq!(
+            p1,
+            Polynomial {
+                coefficients: vec![
+                    from_const(3),
+                    from_const(10),
+                    from_const(13),
+                    from_const(10)
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn test_polynomial_mul_assign_ref() {
+        let mut p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+        };
+        p1 *= &p2;
         assert_eq!(
             p1,
             Polynomial {
@@ -2508,6 +2883,92 @@ mod tests {
             result
         );
         // okay, not gonna try all permutations -- too much typing for too little gain.
+    }
+
+    #[test]
+    fn test_product_empty() {
+        let polynomials: Vec<Polynomial> = vec![];
+        assert_eq!(
+            polynomials.into_iter().product::<Polynomial>(),
+            Polynomial::multiply_batch(&[])
+        );
+    }
+
+    #[test]
+    fn test_product_one_polynomial() {
+        let p = Polynomial {
+            coefficients: vec![from_const(12), from_const(34)],
+        };
+        assert_eq!(vec![p.clone()].into_iter().product::<Polynomial>(), p);
+    }
+
+    #[test]
+    fn test_product_several_polynomials() {
+        let p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+        };
+        let p3 = Polynomial {
+            coefficients: vec![from_const(6), from_const(7), from_const(8), from_const(9)],
+        };
+        assert_eq!(
+            vec![p1.clone(), p2.clone(), p3.clone()]
+                .into_iter()
+                .product::<Polynomial>(),
+            Polynomial::multiply_batch(&[p1, p2, p3])
+        );
+    }
+
+    #[test]
+    fn test_product_ref_empty() {
+        let polynomials: Vec<Polynomial> = vec![];
+        assert_eq!(
+            polynomials.iter().product::<Polynomial>(),
+            Polynomial::multiply_batch(&[])
+        );
+    }
+
+    #[test]
+    fn test_product_ref_one_polynomial() {
+        let p = Polynomial {
+            coefficients: vec![from_const(12), from_const(34)],
+        };
+        assert_eq!([p.clone()].iter().product::<Polynomial>(), p);
+    }
+
+    #[test]
+    fn test_product_ref_several_polynomials() {
+        let p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+        };
+        let p3 = Polynomial {
+            coefficients: vec![from_const(6), from_const(7), from_const(8), from_const(9)],
+        };
+        let polynomials = [p1.clone(), p2.clone(), p3.clone()];
+        assert_eq!(
+            polynomials.iter().product::<Polynomial>(),
+            Polynomial::multiply_batch(&[p1, p2, p3])
+        );
+    }
+
+    #[test]
+    fn test_product_ref_consistent_with_product() {
+        let p1 = Polynomial {
+            coefficients: vec![from_const(1), from_const(2)],
+        };
+        let p2 = Polynomial {
+            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+        };
+        let polynomials = vec![p1, p2];
+        assert_eq!(
+            polynomials.iter().product::<Polynomial>(),
+            polynomials.into_iter().product::<Polynomial>()
+        );
     }
 
     #[test]
