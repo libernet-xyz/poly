@@ -1,16 +1,19 @@
 [package]
 name = "starkom-poly"
-version = "4.2.0"
+version = "4.3.0"
 description = "Algorithms over polynomials used in Starkom (NTT, Lagrange interpolation, etc.)."
 license = "Apache-2.0"
 repository = "https://github.com/libernet-xyz/poly.git"
 readme = "README.md"
 edition = "2024"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lib]
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-anyhow = "1.0.103"
-starkom-bluesky = "3.2.0"
-starkom-ff = "2.3.0"
+anyhow = "1.0.104"
+starkom-bluesky = "3.3.0"
+starkom-ff = "2.4.0"

@@ -1,7 +1,6 @@
 use crate::utils;
 use anyhow::{Context, Result, anyhow};
-use starkom_bluesky::ThreeAdicField;
-use starkom_ff::PrimeField;
+use starkom_ff::{PrimeField, ThreeAdicField};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::iter::{Product, Sum};
@@ -674,9 +673,9 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     /// Computes an N-th root of unity where N is a power of 3 less than or equal to 3^(F::T).
     fn three_adic_root_of_unity(n: usize) -> F {
         assert!(utils::is_power_of_three(n));
-        let k = utils::ilog3(n) as u32;
+        let k = utils::ilog3(n);
         assert!(k <= F::T);
-        let exponent = 3u64.pow(F::T - k);
+        let exponent = 3u64.pow((F::T - k) as u32);
         F::THREE_ADIC_ROOT_OF_UNITY.pow_u64(exponent)
     }
 
@@ -785,7 +784,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     /// Running time: O(M*log(M)).
     pub fn lde3(self, m: usize) -> Vec<F> {
         assert!(utils::is_power_of_three(m));
-        assert!(utils::ilog3(m) as u32 <= F::T);
+        assert!(utils::ilog3(m) <= F::T);
         assert!(self.coefficients.len() < m);
         let mut data = self.coefficients;
         data.resize(m, F::ZERO);
@@ -822,7 +821,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     pub fn multiply_values3(mut lhs: Vec<F>, mut rhs: Vec<F>) -> Vec<F> {
         let n = lhs.len();
         assert!(utils::is_power_of_three(n));
-        assert!(utils::ilog3(n) as u32 + 1 <= F::T);
+        assert!(utils::ilog3(n) + 1 <= F::T);
         assert_eq!(rhs.len(), n);
         let omega = Self::three_adic_root_of_unity(n);
         Self::ifft3(&mut lhs, omega);

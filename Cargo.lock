@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "anyhow"
-version = "1.0.103"
+version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "arrayvec"
@@ -416,9 +416,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "starkom-bluesky"
-version = "3.2.0"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a631ff0baf4c43cd51e9f844c83b879c20361c39a49107a0dfa978f3153e202"
+checksum = "f22e8490007ee3063f0575878dd2940b52c6cbe73011acec0c3498a6a842bd56"
 dependencies = [
  "anyhow",
  "getrandom 0.2.17",
@@ -431,9 +431,9 @@ dependencies = [
 
 [[package]]
 name = "starkom-ff"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60cd4041231852ba9827224cd72b29d3ca4a396c91b744d6beb868c67759eee6"
+checksum = "74e4dfddaeac060d2457cf1e1bbd035e9472d72724beef7e5b6234a29f115700"
 dependencies = [
  "anyhow",
  "getrandom 0.2.17",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "starkom-poly"
-version = "4.2.0"
+version = "4.3.0"
 dependencies = [
  "anyhow",
  "starkom-bluesky",
