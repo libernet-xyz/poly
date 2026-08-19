@@ -15,5 +15,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 anyhow = "1.0.104"
-starkom-bluesky = "3.3.0"
 starkom-ff = "2.4.0"
+
+[dev-dependencies]
+starkom-bluesky = "3.3.0"
