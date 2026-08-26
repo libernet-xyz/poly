@@ -1,6 +1,6 @@
 use crate::utils;
 use anyhow::{Context, Result, anyhow};
-use starkom_ff::{PrimeField, ThreeAdicField};
+use starkom_ff::{Field, PrimeField, ThreeAdicField};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::iter::{Product, Sum};
@@ -24,11 +24,11 @@ fn make_lagrange0<F: PrimeField>(n: usize) -> Polynomial<F> {
 /// A polynomial expressed as an array of scalar coefficients in ascending degree order (i.e. the
 /// first coefficient is the constant term).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Polynomial<F: PrimeField> {
+pub struct Polynomial<F: Field> {
     coefficients: Vec<F>,
 }
 
-impl<F: PrimeField> Polynomial<F> {
+impl<F: Field> Polynomial<F> {
     /// Constructs a polynomial with the provided coefficients, which must be in ascending degree
     /// order.
     pub fn with_coefficients(coefficients: Vec<F>) -> Self {
@@ -109,6 +109,185 @@ impl<F: PrimeField> Polynomial<F> {
         Ok(Self { coefficients })
     }
 
+    /// Returns the number of coefficients, which is equal to the maximum degree plus 1.
+    pub fn len(&self) -> usize {
+        self.coefficients.len()
+    }
+
+    /// Returns the coefficients of the polynomial in ascending degree order.
+    pub fn coefficients(&self) -> &[F] {
+        self.coefficients.as_slice()
+    }
+
+    fn degree_bound_of(coefficients: &[F]) -> usize {
+        for (i, &coefficient) in coefficients.iter().enumerate().rev() {
+            if coefficient != F::ZERO {
+                return i + 1;
+            }
+        }
+        0
+    }
+
+    /// Returns the degree bound of the polynomial, ie. the smallest number `d` such that the degree
+    /// is strcitly less than `d`.
+    ///
+    /// Equivalently: this function returns the degree plus one.
+    ///
+    /// Running time: O(N) due to the possibility that some of the trailing coefficients are zero.
+    pub fn degree_bound(&self) -> usize {
+        Self::degree_bound_of(self.coefficients.as_slice())
+    }
+
+    /// Removes any trailing null coefficients.
+    ///
+    /// After this call, [`Self::len()`] is guaranteed to reflect the actual degree bound of the
+    /// polynomial:
+    ///
+    /// ```ignore
+    /// assert_eq!(poly.trim().len(), poly.degree_bound());
+    /// ```
+    pub fn trim(mut self) -> Self {
+        if let Some(i) = self
+            .coefficients
+            .iter()
+            .rposition(|value| *value != F::ZERO)
+        {
+            self.coefficients.truncate(i + 1);
+        } else {
+            self.coefficients.clear();
+        }
+        self
+    }
+
+    /// Pads the polynomial with null coefficients until the degree bound is at least
+    /// `degree_bound`.
+    pub fn pad(mut self, min_degree_bound: usize) -> Self {
+        if min_degree_bound > self.coefficients.len() {
+            self.coefficients.resize(min_degree_bound, F::ZERO);
+        }
+        self
+    }
+
+    /// Extracts the array of coefficients from this polynomial.
+    ///
+    /// NOTE: the coefficients are in ascending degree order, i.e. the first returned element is the
+    /// constant term.
+    pub fn take(self) -> Vec<F> {
+        return self.coefficients;
+    }
+
+    /// Divides this polynomial by (x - z) using Horner's method. Returns the quotient polynomial
+    /// and the remainder scalar.
+    ///
+    /// Running time: O(N).
+    pub fn horner(&self, z: F) -> (Self, F) {
+        if self.coefficients.is_empty() {
+            return (Polynomial::default(), F::ZERO);
+        }
+        let n = self.len() - 1;
+        let mut coefficients = vec![F::ZERO; n];
+        if n < 1 {
+            return (Polynomial { coefficients }, self.coefficients[0]);
+        }
+        coefficients[n - 1] = self.coefficients[n];
+        for i in (1..n).rev() {
+            coefficients[i - 1] = self.coefficients[i] + z * coefficients[i];
+        }
+        let remainder = self.coefficients[0] + z * coefficients[0];
+        (Polynomial { coefficients }, remainder)
+    }
+
+    /// Divides this polynomial by (x^n - 1), succeeding only if the remainder is 0. The polynomial
+    /// wrapped in a successful result is the quotient Q such that Q(x) * (x^n - 1) equals this
+    /// polynomial.
+    ///
+    /// Note that (x^n - 1) is a polynomial that evaluates to zero across an evaluation domain of
+    /// size `n`, because the roots of it are the n-th roots of unity. We call this the "zero
+    /// polynomial", hence the "divide by zero" terminology.
+    ///
+    /// REQUIRES: `n` must be strictly greater than 0.
+    ///
+    /// NOTE: this algorithm doesn't check that `n` is a power of 2 or 3 and will work with
+    /// arbitrary values of `n`, but it's generally most useful when `n` is a power of 2 (for the
+    /// two-adic evaluation domain) or 3 (for the three-adic one).
+    ///
+    /// Running time: O(N).
+    pub fn divide_by_zero(self, n: usize) -> Result<Self> {
+        assert!(n > 0);
+
+        let mut data = self.take();
+        if data.len() < n {
+            data.resize(n, F::ZERO);
+        }
+
+        let degree = data.len() - n;
+        let mut quotient = vec![F::ZERO; degree];
+
+        for i in 0..degree {
+            let c = -data[i];
+            quotient[i] = c;
+            data[i + n] -= c;
+        }
+
+        let remainder = &data[degree..];
+        if remainder.iter().any(|c| *c != F::ZERO) {
+            return Err(anyhow!("non-zero remainder in division by (x^n - 1)"));
+        }
+
+        if let Some(i) = quotient.iter().rposition(|c| *c != F::ZERO) {
+            quotient.truncate(i + 1);
+        }
+        Ok(Polynomial {
+            coefficients: quotient,
+        })
+    }
+
+    /// Evaluates the polynomial at the specified X coordinate.
+    ///
+    /// Running time: O(N).
+    ///
+    /// NOTE: the returned value is the same as the remainder value returned by the [`Self::horner`]
+    /// algorithm above. Even though the two algorithms have the same asymptotic running time, this
+    /// one is faster because it doesn't allocate memory for the quotient polynomial.
+    pub fn evaluate(&self, x: F) -> F {
+        let mut y = F::ZERO;
+        for coefficient in self.coefficients.iter().rev() {
+            y = y * x + *coefficient;
+        }
+        y
+    }
+
+    /// Converts this polynomial `P(X)` to `P(shift * X)`, effectively shifting the evaluation
+    /// domain.
+    ///
+    /// Running time: O(N).
+    pub fn shift_domain_by(self, shift: F) -> Self {
+        let mut coefficients = self.coefficients;
+        let mut shift_pow = F::ONE;
+        for c in coefficients.iter_mut() {
+            *c *= shift_pow;
+            shift_pow *= shift;
+        }
+        Self { coefficients }
+    }
+
+    /// Folding algorithm used in FRI and similar algorithms.
+    ///
+    /// `alpha` is a verifier challenge, typically derived via Fiat-Shamir.
+    pub fn fold2(self, alpha: F) -> Self {
+        let coefficients = self.coefficients();
+        let m = (coefficients.len() + 1) / 2;
+        let new_coefficients = (0..m)
+            .map(|i| {
+                coefficients[2 * i]
+                    + alpha * coefficients.get(2 * i + 1).copied().unwrap_or(F::ZERO)
+            })
+            .collect();
+        Self::with_coefficients(new_coefficients)
+    }
+}
+
+impl<F: PrimeField> Polynomial<F> {
     /// 2-adic Fast Fourier Transform.
     ///
     /// REQUIRES: the length of `data` must be a power of two less than or equal to N and `omega`
@@ -225,73 +404,6 @@ impl<F: PrimeField> Polynomial<F> {
         data
     }
 
-    /// Returns the number of coefficients, which is equal to the maximum degree plus 1.
-    pub fn len(&self) -> usize {
-        self.coefficients.len()
-    }
-
-    /// Returns the coefficients of the polynomial in ascending degree order.
-    pub fn coefficients(&self) -> &[F] {
-        self.coefficients.as_slice()
-    }
-
-    fn degree_bound_of(coefficients: &[F]) -> usize {
-        for (i, &coefficient) in coefficients.iter().enumerate().rev() {
-            if coefficient != F::ZERO {
-                return i + 1;
-            }
-        }
-        0
-    }
-
-    /// Returns the degree bound of the polynomial, ie. the smallest number `d` such that the degree
-    /// is strcitly less than `d`.
-    ///
-    /// Equivalently: this function returns the degree plus one.
-    ///
-    /// Running time: O(N) due to the possibility that some of the trailing coefficients are zero.
-    pub fn degree_bound(&self) -> usize {
-        Self::degree_bound_of(self.coefficients.as_slice())
-    }
-
-    /// Removes any trailing null coefficients.
-    ///
-    /// After this call, [`Self::len()`] is guaranteed to reflect the actual degree bound of the
-    /// polynomial:
-    ///
-    /// ```ignore
-    /// assert_eq!(poly.trim().len(), poly.degree_bound());
-    /// ```
-    pub fn trim(mut self) -> Self {
-        if let Some(i) = self
-            .coefficients
-            .iter()
-            .rposition(|value| *value != F::ZERO)
-        {
-            self.coefficients.truncate(i + 1);
-        } else {
-            self.coefficients.clear();
-        }
-        self
-    }
-
-    /// Pads the polynomial with null coefficients until the degree bound is at least
-    /// `degree_bound`.
-    pub fn pad(mut self, min_degree_bound: usize) -> Self {
-        if min_degree_bound > self.coefficients.len() {
-            self.coefficients.resize(min_degree_bound, F::ZERO);
-        }
-        self
-    }
-
-    /// Extracts the array of coefficients from this polynomial.
-    ///
-    /// NOTE: the coefficients are in ascending degree order, i.e. the first returned element is the
-    /// constant term.
-    pub fn take(self) -> Vec<F> {
-        return self.coefficients;
-    }
-
     /// Multiplies two polynomials. Panics if the FFT capacity is exceeded -- that is, if the degree
     /// of the product is greater than or equal to 2^(F::S).
     pub fn multiply(mut self, mut other: Self) -> Self {
@@ -393,101 +505,6 @@ impl<F: PrimeField> Polynomial<F> {
         lhs
     }
 
-    /// Divides this polynomial by (x - z) using Horner's method. Returns the quotient polynomial
-    /// and the remainder scalar.
-    ///
-    /// Running time: O(N).
-    pub fn horner(&self, z: F) -> (Self, F) {
-        if self.coefficients.is_empty() {
-            return (Polynomial::default(), F::ZERO);
-        }
-        let n = self.len() - 1;
-        let mut coefficients = vec![F::ZERO; n];
-        if n < 1 {
-            return (Polynomial { coefficients }, self.coefficients[0]);
-        }
-        coefficients[n - 1] = self.coefficients[n];
-        for i in (1..n).rev() {
-            coefficients[i - 1] = self.coefficients[i] + z * coefficients[i];
-        }
-        let remainder = self.coefficients[0] + z * coefficients[0];
-        (Polynomial { coefficients }, remainder)
-    }
-
-    /// Divides this polynomial by (x^n - 1), succeeding only if the remainder is 0. The polynomial
-    /// wrapped in a successful result is the quotient Q such that Q(x) * (x^n - 1) equals this
-    /// polynomial.
-    ///
-    /// Note that (x^n - 1) is a polynomial that evaluates to zero across an evaluation domain of
-    /// size `n`, because the roots of it are the n-th roots of unity. We call this the "zero
-    /// polynomial", hence the "divide by zero" terminology.
-    ///
-    /// REQUIRES: `n` must be strictly greater than 0.
-    ///
-    /// NOTE: this algorithm doesn't check that `n` is a power of 2 or 3 and will work with
-    /// arbitrary values of `n`, but it's generally most useful when `n` is a power of 2 (for the
-    /// two-adic evaluation domain) or 3 (for the three-adic one).
-    ///
-    /// Running time: O(N).
-    pub fn divide_by_zero(self, n: usize) -> Result<Self> {
-        assert!(n > 0);
-
-        let mut data = self.take();
-        if data.len() < n {
-            data.resize(n, F::ZERO);
-        }
-
-        let degree = data.len() - n;
-        let mut quotient = vec![F::ZERO; degree];
-
-        for i in 0..degree {
-            let c = -data[i];
-            quotient[i] = c;
-            data[i + n] -= c;
-        }
-
-        let remainder = &data[degree..];
-        if remainder.iter().any(|c| *c != F::ZERO) {
-            return Err(anyhow!("non-zero remainder in division by (x^n - 1)"));
-        }
-
-        if let Some(i) = quotient.iter().rposition(|c| *c != F::ZERO) {
-            quotient.truncate(i + 1);
-        }
-        Ok(Polynomial {
-            coefficients: quotient,
-        })
-    }
-
-    /// Evaluates the polynomial at the specified X coordinate.
-    ///
-    /// Running time: O(N).
-    ///
-    /// NOTE: the returned value is the same as the remainder value returned by the [`Self::horner`]
-    /// algorithm above. Even though the two algorithms have the same asymptotic running time, this
-    /// one is faster because it doesn't allocate memory for the quotient polynomial.
-    pub fn evaluate(&self, x: F) -> F {
-        let mut y = F::ZERO;
-        for coefficient in self.coefficients.iter().rev() {
-            y = y * x + *coefficient;
-        }
-        y
-    }
-
-    /// Converts this polynomial `P(X)` to `P(shift * X)`, effectively shifting the evaluation
-    /// domain.
-    ///
-    /// Running time: O(N).
-    pub fn shift_domain_by(self, shift: F) -> Self {
-        let mut coefficients = self.coefficients;
-        let mut shift_pow = F::ONE;
-        for c in coefficients.iter_mut() {
-            *c *= shift_pow;
-            shift_pow *= shift;
-        }
-        Self { coefficients }
-    }
-
     /// Converts this polynomial `P(X)` to `P(g * X)`, where `g` is [`F::MULTIPLICATIVE_GENERATOR`].
     ///
     /// The choice of the multiplicative generator prevents collisions between the old and new
@@ -557,21 +574,6 @@ impl<F: PrimeField> Polynomial<F> {
         data
     }
 
-    /// Folding algorithm used in FRI and similar algorithms.
-    ///
-    /// `alpha` is a verifier challenge, typically derived via Fiat-Shamir.
-    pub fn fold2(self, alpha: F) -> Self {
-        let coefficients = self.coefficients();
-        let m = (coefficients.len() + 1) / 2;
-        let new_coefficients = (0..m)
-            .map(|i| {
-                coefficients[2 * i]
-                    + alpha * coefficients.get(2 * i + 1).copied().unwrap_or(F::ZERO)
-            })
-            .collect();
-        Self::with_coefficients(new_coefficients)
-    }
-
     /// Returns the Lagrange basis polynomial L0 that activates on the first point of the two-adic
     /// evaluation domain of size `n` and evaluates to 0 over the rest.
     ///
@@ -606,7 +608,7 @@ impl<F: PrimeField> Polynomial<F> {
     }
 }
 
-impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
+impl<F: ThreeAdicField> Polynomial<F> {
     /// 3-adic Fast Fourier Transform.
     ///
     /// REQUIRES: the length of `data` must be a power of three less than or equal to N and `omega`
@@ -875,7 +877,7 @@ impl<F: PrimeField + ThreeAdicField> Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Neg for Polynomial<F> {
+impl<F: Field> Neg for Polynomial<F> {
     type Output = Self;
 
     fn neg(mut self) -> Self::Output {
@@ -886,7 +888,7 @@ impl<F: PrimeField> Neg for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Add<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Add<Polynomial<F>> for Polynomial<F> {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self::Output {
@@ -901,7 +903,7 @@ impl<F: PrimeField> Add<Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Add<&Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Add<&Polynomial<F>> for Polynomial<F> {
     type Output = Self;
 
     fn add(mut self, rhs: &Self) -> Self::Output {
@@ -916,7 +918,7 @@ impl<F: PrimeField> Add<&Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> AddAssign<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> AddAssign<Polynomial<F>> for Polynomial<F> {
     fn add_assign(&mut self, mut rhs: Self) {
         if rhs.len() > self.len() {
             for i in 0..self.len() {
@@ -931,7 +933,7 @@ impl<F: PrimeField> AddAssign<Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> AddAssign<&Polynomial<F>> for Polynomial<F> {
+impl<F: Field> AddAssign<&Polynomial<F>> for Polynomial<F> {
     fn add_assign(&mut self, rhs: &Self) {
         let len = rhs.len();
         if len > self.len() {
@@ -943,7 +945,7 @@ impl<F: PrimeField> AddAssign<&Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Add<F> for Polynomial<F> {
+impl<F: Field> Add<F> for Polynomial<F> {
     type Output = Self;
 
     fn add(mut self, rhs: F) -> Self::Output {
@@ -956,7 +958,7 @@ impl<F: PrimeField> Add<F> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> AddAssign<F> for Polynomial<F> {
+impl<F: Field> AddAssign<F> for Polynomial<F> {
     fn add_assign(&mut self, rhs: F) {
         if self.coefficients.is_empty() {
             self.coefficients.push(rhs);
@@ -966,7 +968,7 @@ impl<F: PrimeField> AddAssign<F> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Sub<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Sub<Polynomial<F>> for Polynomial<F> {
     type Output = Self;
 
     fn sub(mut self, rhs: Self) -> Self::Output {
@@ -980,7 +982,7 @@ impl<F: PrimeField> Sub<Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Sub<&Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Sub<&Polynomial<F>> for Polynomial<F> {
     type Output = Self;
 
     fn sub(mut self, rhs: &Self) -> Self::Output {
@@ -995,7 +997,7 @@ impl<F: PrimeField> Sub<&Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> SubAssign<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> SubAssign<Polynomial<F>> for Polynomial<F> {
     fn sub_assign(&mut self, mut rhs: Self) {
         if rhs.len() > self.len() {
             for i in 0..self.len() {
@@ -1013,7 +1015,7 @@ impl<F: PrimeField> SubAssign<Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> SubAssign<&Polynomial<F>> for Polynomial<F> {
+impl<F: Field> SubAssign<&Polynomial<F>> for Polynomial<F> {
     fn sub_assign(&mut self, rhs: &Self) {
         let len = rhs.len();
         if len > self.len() {
@@ -1025,7 +1027,7 @@ impl<F: PrimeField> SubAssign<&Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Sub<F> for Polynomial<F> {
+impl<F: Field> Sub<F> for Polynomial<F> {
     type Output = Self;
 
     fn sub(mut self, rhs: F) -> Self::Output {
@@ -1038,7 +1040,7 @@ impl<F: PrimeField> Sub<F> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> SubAssign<F> for Polynomial<F> {
+impl<F: Field> SubAssign<F> for Polynomial<F> {
     fn sub_assign(&mut self, rhs: F) {
         if self.coefficients.is_empty() {
             self.coefficients.push(-rhs);
@@ -1048,7 +1050,7 @@ impl<F: PrimeField> SubAssign<F> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Mul<F> for Polynomial<F> {
+impl<F: Field> Mul<F> for Polynomial<F> {
     type Output = Self;
 
     fn mul(mut self, rhs: F) -> Self::Output {
@@ -1059,7 +1061,7 @@ impl<F: PrimeField> Mul<F> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> MulAssign<F> for Polynomial<F> {
+impl<F: Field> MulAssign<F> for Polynomial<F> {
     fn mul_assign(&mut self, rhs: F) {
         for i in 0..self.len() {
             self.coefficients[i] *= rhs;
@@ -1095,13 +1097,13 @@ impl<F: PrimeField> MulAssign<&Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Sum<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Sum<Polynomial<F>> for Polynomial<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Polynomial::default(), |a, b| a + b)
     }
 }
 
-impl<'a, F: PrimeField> Sum<&'a Polynomial<F>> for Polynomial<F> {
+impl<'a, F: Field> Sum<&'a Polynomial<F>> for Polynomial<F> {
     fn sum<I: Iterator<Item = &'a Polynomial<F>>>(iter: I) -> Self {
         iter.fold(Polynomial::default(), |a, b| a + b)
     }
