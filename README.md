@@ -9,7 +9,6 @@
 This crate contains several algorithms over polynomials used in Starkom (NTT, Lagrange
 interpolation, etc.).
 
-Most algorithms are implemented generically for any prime field. The main requirement is that the
-field implements the
-[`PrimeField`](https://docs.rs/starkom-ff/latest/starkom_ff/trait.PrimeField.html) trait provided in
-the [`starkom-ff`](https://crates.io/crates/starkom-ff) crate.
+All algorithms are implemented generically for any field. The main requirement is that the field
+implements the [`Field`](https://docs.rs/starkom-ff/latest/starkom_ff/trait.Field.html) trait
+provided by the [`starkom-ff`](https://crates.io/crates/starkom-ff) crate.

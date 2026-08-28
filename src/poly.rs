@@ -1,6 +1,6 @@
 use crate::utils;
 use anyhow::{Context, Result, anyhow};
-use starkom_ff::{Field, PrimeField, ThreeAdicField};
+use starkom_ff::{Field, ThreeAdicField};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::iter::{Product, Sum};
@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 /// [`Polynomial::lagrange0_3`].
 ///
 /// Running time: O(N).
-fn make_lagrange0<F: PrimeField>(n: usize) -> Polynomial<F> {
+fn make_lagrange0<F: Field>(n: usize) -> Polynomial<F> {
     let mut coefficients = vec![F::ZERO; n + 1];
     coefficients[0] = -F::ONE;
     coefficients[n] = F::ONE;
@@ -176,118 +176,6 @@ impl<F: Field> Polynomial<F> {
         return self.coefficients;
     }
 
-    /// Divides this polynomial by (x - z) using Horner's method. Returns the quotient polynomial
-    /// and the remainder scalar.
-    ///
-    /// Running time: O(N).
-    pub fn horner(&self, z: F) -> (Self, F) {
-        if self.coefficients.is_empty() {
-            return (Polynomial::default(), F::ZERO);
-        }
-        let n = self.len() - 1;
-        let mut coefficients = vec![F::ZERO; n];
-        if n < 1 {
-            return (Polynomial { coefficients }, self.coefficients[0]);
-        }
-        coefficients[n - 1] = self.coefficients[n];
-        for i in (1..n).rev() {
-            coefficients[i - 1] = self.coefficients[i] + z * coefficients[i];
-        }
-        let remainder = self.coefficients[0] + z * coefficients[0];
-        (Polynomial { coefficients }, remainder)
-    }
-
-    /// Divides this polynomial by (x^n - 1), succeeding only if the remainder is 0. The polynomial
-    /// wrapped in a successful result is the quotient Q such that Q(x) * (x^n - 1) equals this
-    /// polynomial.
-    ///
-    /// Note that (x^n - 1) is a polynomial that evaluates to zero across an evaluation domain of
-    /// size `n`, because the roots of it are the n-th roots of unity. We call this the "zero
-    /// polynomial", hence the "divide by zero" terminology.
-    ///
-    /// REQUIRES: `n` must be strictly greater than 0.
-    ///
-    /// NOTE: this algorithm doesn't check that `n` is a power of 2 or 3 and will work with
-    /// arbitrary values of `n`, but it's generally most useful when `n` is a power of 2 (for the
-    /// two-adic evaluation domain) or 3 (for the three-adic one).
-    ///
-    /// Running time: O(N).
-    pub fn divide_by_zero(self, n: usize) -> Result<Self> {
-        assert!(n > 0);
-
-        let mut data = self.take();
-        if data.len() < n {
-            data.resize(n, F::ZERO);
-        }
-
-        let degree = data.len() - n;
-        let mut quotient = vec![F::ZERO; degree];
-
-        for i in 0..degree {
-            let c = -data[i];
-            quotient[i] = c;
-            data[i + n] -= c;
-        }
-
-        let remainder = &data[degree..];
-        if remainder.iter().any(|c| *c != F::ZERO) {
-            return Err(anyhow!("non-zero remainder in division by (x^n - 1)"));
-        }
-
-        if let Some(i) = quotient.iter().rposition(|c| *c != F::ZERO) {
-            quotient.truncate(i + 1);
-        }
-        Ok(Polynomial {
-            coefficients: quotient,
-        })
-    }
-
-    /// Evaluates the polynomial at the specified X coordinate.
-    ///
-    /// Running time: O(N).
-    ///
-    /// NOTE: the returned value is the same as the remainder value returned by the [`Self::horner`]
-    /// algorithm above. Even though the two algorithms have the same asymptotic running time, this
-    /// one is faster because it doesn't allocate memory for the quotient polynomial.
-    pub fn evaluate(&self, x: F) -> F {
-        let mut y = F::ZERO;
-        for coefficient in self.coefficients.iter().rev() {
-            y = y * x + *coefficient;
-        }
-        y
-    }
-
-    /// Converts this polynomial `P(X)` to `P(shift * X)`, effectively shifting the evaluation
-    /// domain.
-    ///
-    /// Running time: O(N).
-    pub fn shift_domain_by(self, shift: F) -> Self {
-        let mut coefficients = self.coefficients;
-        let mut shift_pow = F::ONE;
-        for c in coefficients.iter_mut() {
-            *c *= shift_pow;
-            shift_pow *= shift;
-        }
-        Self { coefficients }
-    }
-
-    /// Folding algorithm used in FRI and similar algorithms.
-    ///
-    /// `alpha` is a verifier challenge, typically derived via Fiat-Shamir.
-    pub fn fold2(self, alpha: F) -> Self {
-        let coefficients = self.coefficients();
-        let m = (coefficients.len() + 1) / 2;
-        let new_coefficients = (0..m)
-            .map(|i| {
-                coefficients[2 * i]
-                    + alpha * coefficients.get(2 * i + 1).copied().unwrap_or(F::ZERO)
-            })
-            .collect();
-        Self::with_coefficients(new_coefficients)
-    }
-}
-
-impl<F: PrimeField> Polynomial<F> {
     /// 2-adic Fast Fourier Transform.
     ///
     /// REQUIRES: the length of `data` must be a power of two less than or equal to N and `omega`
@@ -505,15 +393,25 @@ impl<F: PrimeField> Polynomial<F> {
         lhs
     }
 
-    /// Converts this polynomial `P(X)` to `P(g * X)`, where `g` is [`F::MULTIPLICATIVE_GENERATOR`].
-    ///
-    /// The choice of the multiplicative generator prevents collisions between the old and new
-    /// locations, so this shift can be used in FRI and similar algorithms to preserve secrecy of
-    /// the values at the original locations while querying the polynomial on the shifted domain.
+    /// Divides this polynomial by (x - z) using Horner's method. Returns the quotient polynomial
+    /// and the remainder scalar.
     ///
     /// Running time: O(N).
-    pub fn shift_domain(self) -> Self {
-        self.shift_domain_by(F::MULTIPLICATIVE_GENERATOR)
+    pub fn horner(&self, z: F) -> (Self, F) {
+        if self.coefficients.is_empty() {
+            return (Polynomial::default(), F::ZERO);
+        }
+        let n = self.len() - 1;
+        let mut coefficients = vec![F::ZERO; n];
+        if n < 1 {
+            return (Polynomial { coefficients }, self.coefficients[0]);
+        }
+        coefficients[n - 1] = self.coefficients[n];
+        for i in (1..n).rev() {
+            coefficients[i - 1] = self.coefficients[i] + z * coefficients[i];
+        }
+        let remainder = self.coefficients[0] + z * coefficients[0];
+        (Polynomial { coefficients }, remainder)
     }
 
     /// Returns the X coordinate of the i-th element of a list encoded with [`Self::encode2`].
@@ -540,6 +438,66 @@ impl<F: PrimeField> Polynomial<F> {
         F::MULTIPLICATIVE_GENERATOR * Self::domain_element2(index, domain_size)
     }
 
+    /// Divides this polynomial by (x^n - 1), succeeding only if the remainder is 0. The polynomial
+    /// wrapped in a successful result is the quotient Q such that Q(x) * (x^n - 1) equals this
+    /// polynomial.
+    ///
+    /// Note that (x^n - 1) is a polynomial that evaluates to zero across an evaluation domain of
+    /// size `n`, because the roots of it are the n-th roots of unity. We call this the "zero
+    /// polynomial", hence the "divide by zero" terminology.
+    ///
+    /// REQUIRES: `n` must be strictly greater than 0.
+    ///
+    /// NOTE: this algorithm doesn't check that `n` is a power of 2 or 3 and will work with
+    /// arbitrary values of `n`, but it's generally most useful when `n` is a power of 2 (for the
+    /// two-adic evaluation domain) or 3 (for the three-adic one).
+    ///
+    /// Running time: O(N).
+    pub fn divide_by_zero(self, n: usize) -> Result<Self> {
+        assert!(n > 0);
+
+        let mut data = self.take();
+        if data.len() < n {
+            data.resize(n, F::ZERO);
+        }
+
+        let degree = data.len() - n;
+        let mut quotient = vec![F::ZERO; degree];
+
+        for i in 0..degree {
+            let c = -data[i];
+            quotient[i] = c;
+            data[i + n] -= c;
+        }
+
+        let remainder = &data[degree..];
+        if remainder.iter().any(|c| *c != F::ZERO) {
+            return Err(anyhow!("non-zero remainder in division by (x^n - 1)"));
+        }
+
+        if let Some(i) = quotient.iter().rposition(|c| *c != F::ZERO) {
+            quotient.truncate(i + 1);
+        }
+        Ok(Polynomial {
+            coefficients: quotient,
+        })
+    }
+
+    /// Evaluates the polynomial at the specified X coordinate.
+    ///
+    /// Running time: O(N).
+    ///
+    /// NOTE: the returned value is the same as the remainder value returned by the [`Self::horner`]
+    /// algorithm above. Even though the two algorithms have the same asymptotic running time, this
+    /// one is faster because it doesn't allocate memory for the quotient polynomial.
+    pub fn evaluate(&self, x: F) -> F {
+        let mut y = F::ZERO;
+        for coefficient in self.coefficients.iter().rev() {
+            y = y * x + *coefficient;
+        }
+        y
+    }
+
     /// Same as `evaluate(domain_element2(index, domain_size))`.
     ///
     /// Running time: O(N).
@@ -552,6 +510,31 @@ impl<F: PrimeField> Polynomial<F> {
     /// Running time: O(N).
     pub fn evaluate_on_two_adic_coset(&self, index: usize, domain_size: usize) -> F {
         self.evaluate(Self::coset_element2(index, domain_size))
+    }
+
+    /// Converts this polynomial `P(X)` to `P(shift * X)`, effectively shifting the evaluation
+    /// domain.
+    ///
+    /// Running time: O(N).
+    pub fn shift_domain_by(self, shift: F) -> Self {
+        let mut coefficients = self.coefficients;
+        let mut shift_pow = F::ONE;
+        for c in coefficients.iter_mut() {
+            *c *= shift_pow;
+            shift_pow *= shift;
+        }
+        Self { coefficients }
+    }
+
+    /// Converts this polynomial `P(X)` to `P(g * X)`, where `g` is [`F::MULTIPLICATIVE_GENERATOR`].
+    ///
+    /// The choice of the multiplicative generator prevents collisions between the old and new
+    /// locations, so this shift can be used in FRI and similar algorithms to preserve secrecy of
+    /// the values at the original locations while querying the polynomial on the shifted domain.
+    ///
+    /// Running time: O(N).
+    pub fn shift_domain(self) -> Self {
+        self.shift_domain_by(F::MULTIPLICATIVE_GENERATOR)
     }
 
     /// Computes a low-degree extension of the polynomial by evaluating it at `m` points, where `m`
@@ -572,6 +555,21 @@ impl<F: PrimeField> Polynomial<F> {
         let omega = Self::two_adic_root_of_unity(m);
         Self::fft2(&mut data, omega);
         data
+    }
+
+    /// Folding algorithm used in FRI and similar algorithms.
+    ///
+    /// `alpha` is a verifier challenge, typically derived via Fiat-Shamir.
+    pub fn fold2(self, alpha: F) -> Self {
+        let coefficients = self.coefficients();
+        let m = (coefficients.len() + 1) / 2;
+        let new_coefficients = (0..m)
+            .map(|i| {
+                coefficients[2 * i]
+                    + alpha * coefficients.get(2 * i + 1).copied().unwrap_or(F::ZERO)
+            })
+            .collect();
+        Self::with_coefficients(new_coefficients)
     }
 
     /// Returns the Lagrange basis polynomial L0 that activates on the first point of the two-adic
@@ -1069,7 +1067,7 @@ impl<F: Field> MulAssign<F> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Mul<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Mul<Polynomial<F>> for Polynomial<F> {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -1077,7 +1075,7 @@ impl<F: PrimeField> Mul<Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Mul<&Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Mul<&Polynomial<F>> for Polynomial<F> {
     type Output = Self;
 
     fn mul(self, rhs: &Self) -> Self::Output {
@@ -1085,13 +1083,13 @@ impl<F: PrimeField> Mul<&Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> MulAssign<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> MulAssign<Polynomial<F>> for Polynomial<F> {
     fn mul_assign(&mut self, rhs: Self) {
         *self = std::mem::take(self).multiply(rhs);
     }
 }
 
-impl<F: PrimeField> MulAssign<&Polynomial<F>> for Polynomial<F> {
+impl<F: Field> MulAssign<&Polynomial<F>> for Polynomial<F> {
     fn mul_assign(&mut self, rhs: &Self) {
         *self = std::mem::take(self).multiply(rhs.clone());
     }
@@ -1109,14 +1107,14 @@ impl<'a, F: Field> Sum<&'a Polynomial<F>> for Polynomial<F> {
     }
 }
 
-impl<F: PrimeField> Product<Polynomial<F>> for Polynomial<F> {
+impl<F: Field> Product<Polynomial<F>> for Polynomial<F> {
     fn product<I: Iterator<Item = Polynomial<F>>>(iter: I) -> Self {
         let polynomials = iter.collect::<Vec<_>>();
         Polynomial::multiply_batch(polynomials.iter())
     }
 }
 
-impl<'a, F: PrimeField> Product<&'a Polynomial<F>> for Polynomial<F> {
+impl<'a, F: Field> Product<&'a Polynomial<F>> for Polynomial<F> {
     fn product<I: Iterator<Item = &'a Polynomial<F>>>(iter: I) -> Self {
         let polynomials = iter.collect::<Vec<_>>();
         Polynomial::multiply_batch(polynomials)
@@ -1126,7 +1124,7 @@ impl<'a, F: PrimeField> Product<&'a Polynomial<F>> for Polynomial<F> {
 #[cfg(test)]
 mod tests {
     use starkom_bluesky::{Scalar, from_const};
-    use starkom_ff::{Field, PrimeField};
+    use starkom_ff::Field;
 
     type Polynomial = super::Polynomial<Scalar>;
 
