@@ -209,7 +209,7 @@ impl<F: Field> Polynomial<F> {
             let mut w = F::BaseField::ONE;
             for k in 0..m {
                 for j in (k..n).step_by(step) {
-                    let t = data[j + m] * w;
+                    let t = w * data[j + m];
                     let u = data[j];
                     data[j] = u + t;
                     data[j + m] = u - t;
@@ -3420,7 +3420,7 @@ mod tests {
     #[test]
     fn test_lagrange0_two_adic_8() {
         let n = 8;
-        let omega:GL4 = Polynomial::<GL4>::domain_element2(1, n).into();
+        let omega: GL4 = Polynomial::<GL4>::domain_element2(1, n).into();
         let l0 = Polynomial::<GL4>::lagrange0_2(n);
         assert_eq!(l0.evaluate(gl4(1)), gl4(1));
         assert_eq!(l0.evaluate(omega), gl4(0));
