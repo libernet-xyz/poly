@@ -179,15 +179,21 @@ impl<F: Field> Polynomial<F> {
     /// 2-adic Fast Fourier Transform.
     ///
     /// REQUIRES: the length of `data` must be a power of two less than or equal to N and `omega`
-    /// must be an N-th root of unity, where N = 2^(F::S).
+    /// must be an N-th root of unity, where `N = 2^(F::BaseField::S)`.
+    ///
+    /// NOTE: `omega` is defined over the base field for efficiency reasons: base-by-extension
+    /// multiplications are generally faster than extension-by-extension multiplications. Note that
+    /// an N-th root of unity in the base field is automatically one in `F`, since the embedding is
+    /// a ring homomorphism; the real constraint is that the base field must have enough 2-adicity
+    /// to accommodate the requested domain, ie. the 2-adicity of `F` itself is irrelevant here.
     ///
     /// Running time: O(N*logN).
-    fn fft2(data: &mut [F], omega: F) {
+    fn fft2(data: &mut [F], omega: F::BaseField) {
         let n = data.len();
         assert!(n.is_power_of_two());
 
         let log_n = n.trailing_zeros();
-        assert!(log_n as usize <= F::S);
+        assert!(log_n as usize <= F::BaseField::S);
 
         for i in 0..n {
             let (j, _) = i.reverse_bits().overflowing_shr(usize::BITS - log_n);
@@ -200,10 +206,10 @@ impl<F: Field> Polynomial<F> {
         for _ in 0..log_n {
             let step = m * 2;
             let wm = omega.pow_small(n / step);
-            let mut w = F::ONE;
+            let mut w = F::BaseField::ONE;
             for k in 0..m {
                 for j in (k..n).step_by(step) {
-                    let t = w * data[j + m];
+                    let t = data[j + m] * w;
                     let u = data[j];
                     data[j] = u + t;
                     data[j + m] = u - t;
@@ -216,11 +222,13 @@ impl<F: Field> Polynomial<F> {
 
     /// Inverse 2-adic Fast Fourier Transform.
     ///
-    /// REQUIRES: `n` must be a power of two less than or equal to 2^S, with `S` being the 2-adicity
-    /// of the field `F` (supplied as `F::S`).
+    /// See [`Self::fft2`] for more details.
+    ///
+    /// REQUIRES: the length of `data` must be a power of two less than or equal to N and `omega`
+    /// must be an N-th root of unity, where `N = 2^(F::BaseField::S)`.
     ///
     /// Running time: O(N*logN).
-    fn ifft2(data: &mut [F], omega: F) {
+    fn ifft2(data: &mut [F], omega: F::BaseField) {
         Self::fft2(data, omega.invert_unwrap());
         let n_inv = F::try_from(data.len()).unwrap().invert_unwrap();
         for v in data.iter_mut() {
@@ -228,21 +236,30 @@ impl<F: Field> Polynomial<F> {
         }
     }
 
-    /// Computes an N-th root of unity where N is a power of 2 less than or equal to 2^(F::S).
-    fn two_adic_root_of_unity(n: usize) -> F {
+    /// Computes an N-th root of unity where N is a power of 2 less than or equal to
+    /// `2^(F::BaseField::S)`.
+    ///
+    /// NOTE: the root of unity is defined over the base field for efficiency reasons:
+    /// base-by-extension multiplications are generally faster than extension-by-extension
+    /// multiplications. The order-N subgroup of an extension field coincides with that of its base
+    /// field whenever N divides the order of the latter's multiplicative group, so this doesn't
+    /// change the evaluation domain; it does however cap the domain size at `2^(F::BaseField::S)`
+    /// rather than `2^(F::S)`.
+    fn two_adic_root_of_unity(n: usize) -> F::BaseField {
         assert!(n.is_power_of_two());
         let k = n.trailing_zeros() as usize;
-        assert!(k <= F::S);
-        let exponent = 1u64 << (F::S - k);
-        F::ROOT_OF_UNITY.pow_u64(exponent)
+        let s = F::BaseField::S;
+        assert!(k <= s);
+        let exponent = 1u64 << (s - k);
+        F::BaseField::ROOT_OF_UNITY.pow_u64(exponent)
     }
 
     /// Interpolates a polynomial that encodes an ordered list of values.
     ///
     /// The returned polynomial evaluates to the provided values at certain powers of
-    /// `F::ROOT_OF_UNITY`. The exact coordinates can be retrieved by calling
-    /// [`Self::domain_element2`] with the index of the value to query and the size of the domain
-    /// (i.e. `values.len()`).
+    /// [`F::ROOT_OF_UNITY`](`Field::ROOT_OF_UNITY`). The exact coordinates can be retrieved by
+    /// calling [`Self::domain_element2`] with the index of the value to query and the size of the
+    /// domain (i.e. `values.len()`).
     ///
     /// NOTE: this function is called `encode2` because it uses the two-adic evaluation domain. For
     /// the three-adic version see [`Self::encode3`] below.
@@ -252,13 +269,13 @@ impl<F: Field> Polynomial<F> {
     /// function will automatically pad the provided list with zeros.
     ///
     /// Additionally, the provided list must not exceed the FFT capacity so it's required to have no
-    /// more than 2^(F::S) elements.
+    /// more than `2^(F::BaseField::S)` elements.
     ///
     /// Running time: O(N*logN).
     pub fn encode2(mut values: Vec<F>) -> Self {
         assert!(!values.is_empty());
         let n = values.len().next_power_of_two();
-        assert!(n.trailing_zeros() as usize <= F::S);
+        assert!(n.trailing_zeros() as usize <= F::BaseField::S);
         if n != values.len() {
             values.resize(n, F::ZERO);
         }
@@ -293,7 +310,7 @@ impl<F: Field> Polynomial<F> {
     }
 
     /// Multiplies two polynomials. Panics if the FFT capacity is exceeded -- that is, if the degree
-    /// of the product is greater than or equal to 2^(F::S).
+    /// of the product is greater than or equal to `2^(F::BaseField::S)`.
     pub fn multiply(mut self, mut other: Self) -> Self {
         self = self.trim();
         other = other.trim();
@@ -333,7 +350,7 @@ impl<F: Field> Polynomial<F> {
 
     /// Multiplies an arbitrary number of polynomials together, returning an error if the FFT
     /// capacity is exceeded -- that is, if the degree bound of the product is greater than or equal
-    /// to `2^(F::S)`.
+    /// to `2^(F::BaseField::S)`.
     pub fn multiply_batch<'a, I: IntoIterator<Item = &'a Self>>(polynomials: I) -> Self
     where
         I::IntoIter: Clone,
@@ -374,7 +391,7 @@ impl<F: Field> Polynomial<F> {
     pub fn multiply_values2(mut lhs: Vec<F>, mut rhs: Vec<F>) -> Vec<F> {
         let n = lhs.len();
         assert!(n.is_power_of_two());
-        assert!(n.trailing_zeros() as usize + 1 <= F::S);
+        assert!(n.trailing_zeros() as usize + 1 <= F::BaseField::S);
         assert_eq!(rhs.len(), n);
         let omega = Self::two_adic_root_of_unity(n);
         Self::ifft2(&mut lhs, omega);
@@ -423,7 +440,7 @@ impl<F: Field> Polynomial<F> {
     /// two automatically.
     ///
     /// Running time: O(1).
-    pub fn domain_element2(index: usize, domain_size: usize) -> F {
+    pub fn domain_element2(index: usize, domain_size: usize) -> F::BaseField {
         let omega = Self::two_adic_root_of_unity(domain_size.next_power_of_two());
         omega.pow_small(index)
     }
@@ -431,11 +448,12 @@ impl<F: Field> Polynomial<F> {
     /// Returns the X coordinate of the i-th point in the coset domain used by
     /// [`Self::shift_domain`].
     ///
-    /// Equivalent to `F::MULTIPLICATIVE_GENERATOR * domain_element2(index, domain_size)`.
+    /// Equivalent to `F::BaseField::MULTIPLICATIVE_GENERATOR * domain_element2(index,
+    /// domain_size)`.
     ///
     /// Running time: O(1).
-    pub fn coset_element2(index: usize, domain_size: usize) -> F {
-        F::MULTIPLICATIVE_GENERATOR * Self::domain_element2(index, domain_size)
+    pub fn coset_element2(index: usize, domain_size: usize) -> F::BaseField {
+        F::BaseField::MULTIPLICATIVE_GENERATOR * Self::domain_element2(index, domain_size)
     }
 
     /// Divides this polynomial by (x^n - 1), succeeding only if the remainder is 0. The polynomial
@@ -502,14 +520,14 @@ impl<F: Field> Polynomial<F> {
     ///
     /// Running time: O(N).
     pub fn evaluate_on_two_adic_domain(&self, index: usize, domain_size: usize) -> F {
-        self.evaluate(Self::domain_element2(index, domain_size))
+        self.evaluate(Self::domain_element2(index, domain_size).into())
     }
 
     /// Same as `evaluate(coset_element2(index, domain_size))`.
     ///
     /// Running time: O(N).
     pub fn evaluate_on_two_adic_coset(&self, index: usize, domain_size: usize) -> F {
-        self.evaluate(Self::coset_element2(index, domain_size))
+        self.evaluate(Self::coset_element2(index, domain_size).into())
     }
 
     /// Converts this polynomial `P(X)` to `P(shift * X)`, effectively shifting the evaluation
@@ -526,15 +544,19 @@ impl<F: Field> Polynomial<F> {
         Self { coefficients }
     }
 
-    /// Converts this polynomial `P(X)` to `P(g * X)`, where `g` is [`F::MULTIPLICATIVE_GENERATOR`].
+    /// Converts this polynomial `P(X)` to `P(g * X)`, where `g` is
+    /// [`F::BaseField::MULTIPLICATIVE_GENERATOR`](`Field::MULTIPLICATIVE_GENERATOR`).
     ///
     /// The choice of the multiplicative generator prevents collisions between the old and new
     /// locations, so this shift can be used in FRI and similar algorithms to preserve secrecy of
     /// the values at the original locations while querying the polynomial on the shifted domain.
     ///
+    /// NOTE: the shift is the generator of the *base* field, consistently with
+    /// [`Self::coset_element2`], so that the shifted domain stays inside the base field.
+    ///
     /// Running time: O(N).
     pub fn shift_domain(self) -> Self {
-        self.shift_domain_by(F::MULTIPLICATIVE_GENERATOR)
+        self.shift_domain_by(F::BaseField::MULTIPLICATIVE_GENERATOR.into())
     }
 
     /// Computes a low-degree extension of the polynomial by evaluating it at `m` points, where `m`
@@ -543,12 +565,12 @@ impl<F: Field> Polynomial<F> {
     /// The returned vector is an array of `m` evaluations suitable for FRI and similar algorithms.
     ///
     /// REQUIRES: `m` must be a power of two strictly larger than `self.len()`, and no larger than
-    /// `2^(F::S)`.
+    /// `2^(F::BaseField::S)`.
     ///
     /// Running time: O(M*log(M)).
     pub fn lde2(self, m: usize) -> Vec<F> {
         assert!(m.is_power_of_two());
-        assert!(m.trailing_zeros() as usize <= F::S);
+        assert!(m.trailing_zeros() as usize <= F::BaseField::S);
         assert!(self.coefficients.len() < m);
         let mut data = self.coefficients;
         data.resize(m, F::ZERO);
@@ -582,14 +604,14 @@ impl<F: Field> Polynomial<F> {
     ///
     /// where `w` is an n-th root of unity.
     ///
-    /// REQUIRES: `n` must be a power of 2 less than or equal to `2^(F::S)`.
+    /// REQUIRES: `n` must be a power of 2 less than or equal to `2^(F::BaseField::S)`.
     ///
-    /// These polynomials are used in the PLONK proving scheme running over BlueSky. They're
-    /// computed on first use and cached for the lifetime of the program.
+    /// These polynomials are used in the PLONK proving scheme. They're computed on first use and
+    /// cached for the lifetime of the program.
     pub fn lagrange0_2(n: usize) -> &'static Self {
         assert!(n.is_power_of_two());
         let k = n.trailing_zeros() as usize;
-        assert!(k <= F::S);
+        assert!(k <= F::BaseField::S);
 
         static CACHE: OnceLock<Mutex<BTreeMap<(TypeId, usize), &'static (dyn Any + Send + Sync)>>> =
             OnceLock::new();
@@ -1123,83 +1145,70 @@ impl<'a, F: Field> Product<&'a Polynomial<F>> for Polynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use starkom_bluesky::{Scalar, from_const};
+    use super::*;
+    use starkom_bluesky::Scalar as BS;
     use starkom_ff::Field;
+    use starkom_goldilocks::{GL, GL4};
 
-    type Polynomial = super::Polynomial<Scalar>;
-
-    #[inline(always)]
-    fn get_random_scalar() -> Scalar {
-        Scalar::random_default()
+    #[inline]
+    const fn bs(value: u64) -> BS {
+        BS::from_const(value)
     }
 
-    fn from_roots(roots: &[Scalar]) -> Polynomial {
-        Polynomial::from_roots(roots, get_random_scalar()).unwrap()
+    #[inline]
+    const fn gl4(value: u64) -> GL4 {
+        GL4::from_const(value)
+    }
+
+    fn from_roots(roots: &[GL4]) -> Polynomial<GL4> {
+        Polynomial::from_roots(roots, GL4::random_default()).unwrap()
     }
 
     #[test]
     fn test_constant() {
-        let p = Polynomial::constant(from_const(42));
-        assert_eq!(p.evaluate(from_const(12)), from_const(42));
-        assert_eq!(p.evaluate(from_const(34)), from_const(42));
-        assert_eq!(p.evaluate(from_const(42)), from_const(42));
+        let p = Polynomial::<GL4>::constant(gl4(42));
+        assert_eq!(p.evaluate(gl4(12)), gl4(42));
+        assert_eq!(p.evaluate(gl4(34)), gl4(42));
+        assert_eq!(p.evaluate(gl4(42)), gl4(42));
     }
 
     #[test]
     fn test_zero() {
-        let p = Polynomial::with_coefficients(vec![]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![]);
         assert_eq!(p, Polynomial::default());
         assert_eq!(p.len(), 0);
         assert_eq!(p.degree_bound(), 0);
-        assert_eq!(p.evaluate(from_const(42)), from_const(0));
+        assert_eq!(p.evaluate(gl4(42)), gl4(0));
     }
 
     #[test]
     fn test_with_coefficients() {
-        let p = Polynomial::with_coefficients(vec![from_const(12), from_const(34), from_const(56)]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(12), gl4(34), gl4(56)]);
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
-        assert_eq!(
-            p.take(),
-            vec![from_const(12), from_const(34), from_const(56)]
-        );
+        assert_eq!(p.take(), vec![gl4(12), gl4(34), gl4(56)]);
     }
 
     #[test]
     fn test_low_degree() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(0),
-            from_const(0),
-        ]);
+        let p =
+            Polynomial::<GL4>::with_coefficients(vec![gl4(12), gl4(34), gl4(56), gl4(0), gl4(0)]);
         assert_eq!(p.len(), 5);
         assert_eq!(p.degree_bound(), 3);
     }
 
     #[test]
     fn test_skip_degree() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(0),
-            from_const(0),
-            from_const(12),
-            from_const(34),
-            from_const(56),
-        ]);
+        let p =
+            Polynomial::<GL4>::with_coefficients(vec![gl4(0), gl4(0), gl4(12), gl4(34), gl4(56)]);
         assert_eq!(p.len(), 5);
         assert_eq!(p.degree_bound(), 5);
     }
 
     #[test]
     fn test_trim_degree() {
-        let mut p = Polynomial::with_coefficients(vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(0),
-            from_const(0),
-        ]);
+        let mut p =
+            Polynomial::<GL4>::with_coefficients(vec![gl4(12), gl4(34), gl4(56), gl4(0), gl4(0)]);
         p = p.trim();
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
@@ -1207,13 +1216,8 @@ mod tests {
 
     #[test]
     fn test_no_trim() {
-        let mut p = Polynomial::with_coefficients(vec![
-            from_const(0),
-            from_const(0),
-            from_const(12),
-            from_const(34),
-            from_const(56),
-        ]);
+        let mut p =
+            Polynomial::<GL4>::with_coefficients(vec![gl4(0), gl4(0), gl4(12), gl4(34), gl4(56)]);
         p = p.trim();
         assert_eq!(p.len(), 5);
         assert_eq!(p.degree_bound(), 5);
@@ -1221,8 +1225,7 @@ mod tests {
 
     #[test]
     fn test_trim_all_zero() {
-        let mut p =
-            Polynomial::with_coefficients(vec![from_const(0), from_const(0), from_const(0)]);
+        let mut p = Polynomial::<GL4>::with_coefficients(vec![gl4(0), gl4(0), gl4(0)]);
         p = p.trim();
         assert_eq!(p.len(), p.degree_bound());
         assert_eq!(p, Polynomial::default());
@@ -1230,77 +1233,50 @@ mod tests {
 
     #[test]
     fn test_pad_extends() {
-        let mut p = Polynomial::with_coefficients(vec![from_const(12), from_const(34)]);
+        let mut p = Polynomial::<GL4>::with_coefficients(vec![gl4(12), gl4(34)]);
         p = p.pad(5);
         assert_eq!(p.len(), 5);
-        assert_eq!(
-            p.take(),
-            vec![
-                from_const(12),
-                from_const(34),
-                from_const(0),
-                from_const(0),
-                from_const(0)
-            ]
-        );
+        assert_eq!(p.take(), vec![gl4(12), gl4(34), gl4(0), gl4(0), gl4(0)]);
     }
 
     #[test]
     fn test_pad_exact() {
-        let mut p =
-            Polynomial::with_coefficients(vec![from_const(12), from_const(34), from_const(56)]);
+        let mut p = Polynomial::<GL4>::with_coefficients(vec![gl4(12), gl4(34), gl4(56)]);
         p = p.pad(3);
         assert_eq!(p.len(), 3);
-        assert_eq!(
-            p.take(),
-            vec![from_const(12), from_const(34), from_const(56)]
-        );
+        assert_eq!(p.take(), vec![gl4(12), gl4(34), gl4(56)]);
     }
 
     #[test]
     fn test_pad_no_shrink() {
-        let mut p = Polynomial::with_coefficients(vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-        ]);
+        let mut p = Polynomial::<GL4>::with_coefficients(vec![gl4(12), gl4(34), gl4(56), gl4(78)]);
         p = p.pad(2);
         assert_eq!(p.len(), 4);
-        assert_eq!(
-            p.take(),
-            vec![
-                from_const(12),
-                from_const(34),
-                from_const(56),
-                from_const(78)
-            ]
-        );
+        assert_eq!(p.take(), vec![gl4(12), gl4(34), gl4(56), gl4(78)]);
     }
 
     #[test]
     fn test_pad_empty() {
-        let mut p = Polynomial::default();
+        let mut p = Polynomial::<GL4>::default();
         p = p.pad(3);
         assert_eq!(p.len(), 3);
-        assert_eq!(p.take(), vec![from_const(0), from_const(0), from_const(0)]);
+        assert_eq!(p.take(), vec![gl4(0), gl4(0), gl4(0)]);
     }
 
     #[test]
     fn test_pad_zero_bound() {
-        let mut p = Polynomial::with_coefficients(vec![from_const(12), from_const(34)]);
+        let mut p = Polynomial::<GL4>::with_coefficients(vec![gl4(12), gl4(34)]);
         p = p.pad(0);
         assert_eq!(p.len(), 2);
-        assert_eq!(p.take(), vec![from_const(12), from_const(34)]);
+        assert_eq!(p.take(), vec![gl4(12), gl4(34)]);
     }
 
     #[test]
     fn test_pad_preserves_evaluation() {
-        let mut p =
-            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let before = p.evaluate(from_const(7));
+        let mut p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let before = p.evaluate(gl4(7));
         p = p.pad(6);
-        assert_eq!(p.evaluate(from_const(7)), before);
+        assert_eq!(p.evaluate(gl4(7)), before);
     }
 
     #[test]
@@ -1308,181 +1284,181 @@ mod tests {
         let p = from_roots(&[]);
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        assert_ne!(p.evaluate(from_const(12)), from_const(0));
-        assert_ne!(p.evaluate(from_const(34)), from_const(0));
-        assert_ne!(p.evaluate(from_const(56)), from_const(0));
-        assert_ne!(p.evaluate(from_const(78)), from_const(0));
-        assert_ne!(p.evaluate(from_const(90)), from_const(0));
-        assert_ne!(p.evaluate(from_const(13)), from_const(0));
-        assert_ne!(p.evaluate(from_const(57)), from_const(0));
-        assert_ne!(p.evaluate(from_const(92)), from_const(0));
-        assert_ne!(p.evaluate(from_const(46)), from_const(0));
-        assert_ne!(p.evaluate(from_const(80)), from_const(0));
+        assert_ne!(p.evaluate(gl4(12)), gl4(0));
+        assert_ne!(p.evaluate(gl4(34)), gl4(0));
+        assert_ne!(p.evaluate(gl4(56)), gl4(0));
+        assert_ne!(p.evaluate(gl4(78)), gl4(0));
+        assert_ne!(p.evaluate(gl4(90)), gl4(0));
+        assert_ne!(p.evaluate(gl4(13)), gl4(0));
+        assert_ne!(p.evaluate(gl4(57)), gl4(0));
+        assert_ne!(p.evaluate(gl4(92)), gl4(0));
+        assert_ne!(p.evaluate(gl4(46)), gl4(0));
+        assert_ne!(p.evaluate(gl4(80)), gl4(0));
     }
 
     #[test]
     fn test_one_root() {
-        let p = from_roots(&[from_const(12)]);
+        let p = from_roots(&[gl4(12)]);
         assert_eq!(p.len(), 2);
         assert_eq!(p.degree_bound(), 2);
-        assert_eq!(p.evaluate(from_const(12)), from_const(0));
-        assert_ne!(p.evaluate(from_const(34)), from_const(0));
-        assert_ne!(p.evaluate(from_const(56)), from_const(0));
-        assert_ne!(p.evaluate(from_const(78)), from_const(0));
-        assert_ne!(p.evaluate(from_const(90)), from_const(0));
-        assert_ne!(p.evaluate(from_const(13)), from_const(0));
-        assert_ne!(p.evaluate(from_const(57)), from_const(0));
-        assert_ne!(p.evaluate(from_const(92)), from_const(0));
-        assert_ne!(p.evaluate(from_const(46)), from_const(0));
-        assert_ne!(p.evaluate(from_const(80)), from_const(0));
-        let (q, v) = p.horner(from_const(12));
+        assert_eq!(p.evaluate(gl4(12)), gl4(0));
+        assert_ne!(p.evaluate(gl4(34)), gl4(0));
+        assert_ne!(p.evaluate(gl4(56)), gl4(0));
+        assert_ne!(p.evaluate(gl4(78)), gl4(0));
+        assert_ne!(p.evaluate(gl4(90)), gl4(0));
+        assert_ne!(p.evaluate(gl4(13)), gl4(0));
+        assert_ne!(p.evaluate(gl4(57)), gl4(0));
+        assert_ne!(p.evaluate(gl4(92)), gl4(0));
+        assert_ne!(p.evaluate(gl4(46)), gl4(0));
+        assert_ne!(p.evaluate(gl4(80)), gl4(0));
+        let (q, v) = p.horner(gl4(12));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_eq!(v, from_const(0));
-        let (q, v) = p.horner(from_const(34));
+        assert_eq!(v, gl4(0));
+        let (q, v) = p.horner(gl4(34));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_ne!(v, from_const(0));
+        assert_ne!(v, gl4(0));
     }
 
     #[test]
     fn test_three_roots() {
-        let p = from_roots(&[from_const(12), from_const(34), from_const(56)]);
+        let p = from_roots(&[gl4(12), gl4(34), gl4(56)]);
         assert_eq!(p.len(), 4);
         assert_eq!(p.degree_bound(), 4);
-        assert_eq!(p.evaluate(from_const(12)), from_const(0));
-        assert_eq!(p.evaluate(from_const(34)), from_const(0));
-        assert_eq!(p.evaluate(from_const(56)), from_const(0));
-        assert_ne!(p.evaluate(from_const(78)), from_const(0));
-        assert_ne!(p.evaluate(from_const(90)), from_const(0));
-        assert_ne!(p.evaluate(from_const(13)), from_const(0));
-        assert_ne!(p.evaluate(from_const(57)), from_const(0));
-        assert_ne!(p.evaluate(from_const(92)), from_const(0));
-        assert_ne!(p.evaluate(from_const(46)), from_const(0));
-        assert_ne!(p.evaluate(from_const(80)), from_const(0));
-        let (q, v) = p.horner(from_const(12));
+        assert_eq!(p.evaluate(gl4(12)), gl4(0));
+        assert_eq!(p.evaluate(gl4(34)), gl4(0));
+        assert_eq!(p.evaluate(gl4(56)), gl4(0));
+        assert_ne!(p.evaluate(gl4(78)), gl4(0));
+        assert_ne!(p.evaluate(gl4(90)), gl4(0));
+        assert_ne!(p.evaluate(gl4(13)), gl4(0));
+        assert_ne!(p.evaluate(gl4(57)), gl4(0));
+        assert_ne!(p.evaluate(gl4(92)), gl4(0));
+        assert_ne!(p.evaluate(gl4(46)), gl4(0));
+        assert_ne!(p.evaluate(gl4(80)), gl4(0));
+        let (q, v) = p.horner(gl4(12));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_eq!(v, from_const(0));
-        let (q, v) = q.horner(from_const(34));
+        assert_eq!(v, gl4(0));
+        let (q, v) = q.horner(gl4(34));
         assert_eq!(q.len(), 2);
         assert_eq!(q.degree_bound(), 2);
-        assert_eq!(v, from_const(0));
-        let (q, v) = q.horner(from_const(56));
+        assert_eq!(v, gl4(0));
+        let (q, v) = q.horner(gl4(56));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_eq!(v, from_const(0));
-        let (q, v) = p.horner(from_const(78));
+        assert_eq!(v, gl4(0));
+        let (q, v) = p.horner(gl4(78));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, from_const(0));
-        let (q, v) = p.horner(from_const(90));
+        assert_ne!(v, gl4(0));
+        let (q, v) = p.horner(gl4(90));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, from_const(0));
+        assert_ne!(v, gl4(0));
     }
 
     #[test]
     fn test_three_roots_reverse_order() {
-        let p = from_roots(&[from_const(56), from_const(34), from_const(12)]);
+        let p = from_roots(&[gl4(56), gl4(34), gl4(12)]);
         assert_eq!(p.len(), 4);
         assert_eq!(p.degree_bound(), 4);
-        assert_eq!(p.evaluate(from_const(12)), from_const(0));
-        assert_eq!(p.evaluate(from_const(34)), from_const(0));
-        assert_eq!(p.evaluate(from_const(56)), from_const(0));
-        assert_ne!(p.evaluate(from_const(78)), from_const(0));
-        assert_ne!(p.evaluate(from_const(90)), from_const(0));
-        assert_ne!(p.evaluate(from_const(13)), from_const(0));
-        assert_ne!(p.evaluate(from_const(57)), from_const(0));
-        assert_ne!(p.evaluate(from_const(92)), from_const(0));
-        assert_ne!(p.evaluate(from_const(46)), from_const(0));
-        assert_ne!(p.evaluate(from_const(80)), from_const(0));
-        let (q, v) = p.horner(from_const(12));
+        assert_eq!(p.evaluate(gl4(12)), gl4(0));
+        assert_eq!(p.evaluate(gl4(34)), gl4(0));
+        assert_eq!(p.evaluate(gl4(56)), gl4(0));
+        assert_ne!(p.evaluate(gl4(78)), gl4(0));
+        assert_ne!(p.evaluate(gl4(90)), gl4(0));
+        assert_ne!(p.evaluate(gl4(13)), gl4(0));
+        assert_ne!(p.evaluate(gl4(57)), gl4(0));
+        assert_ne!(p.evaluate(gl4(92)), gl4(0));
+        assert_ne!(p.evaluate(gl4(46)), gl4(0));
+        assert_ne!(p.evaluate(gl4(80)), gl4(0));
+        let (q, v) = p.horner(gl4(12));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_eq!(v, from_const(0));
-        let (q, v) = q.horner(from_const(34));
+        assert_eq!(v, gl4(0));
+        let (q, v) = q.horner(gl4(34));
         assert_eq!(q.len(), 2);
         assert_eq!(q.degree_bound(), 2);
-        assert_eq!(v, from_const(0));
-        let (q, v) = q.horner(from_const(56));
+        assert_eq!(v, gl4(0));
+        let (q, v) = q.horner(gl4(56));
         assert_eq!(q.len(), 1);
         assert_eq!(q.degree_bound(), 1);
-        assert_eq!(v, from_const(0));
-        let (q, v) = p.horner(from_const(78));
+        assert_eq!(v, gl4(0));
+        let (q, v) = p.horner(gl4(78));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, from_const(0));
-        let (q, v) = p.horner(from_const(90));
+        assert_ne!(v, gl4(0));
+        let (q, v) = p.horner(gl4(90));
         assert_eq!(q.len(), 3);
         assert_eq!(q.degree_bound(), 3);
-        assert_ne!(v, from_const(0));
+        assert_ne!(v, gl4(0));
     }
 
     #[test]
     fn test_seven_roots() {
         let p = from_roots(&[
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-            from_const(90),
-            from_const(13),
-            from_const(57),
+            gl4(12),
+            gl4(34),
+            gl4(56),
+            gl4(78),
+            gl4(90),
+            gl4(13),
+            gl4(57),
         ]);
         assert_eq!(p.len(), 8);
         assert_eq!(p.degree_bound(), 8);
-        assert_eq!(p.evaluate(from_const(12)), from_const(0));
-        assert_eq!(p.evaluate(from_const(34)), from_const(0));
-        assert_eq!(p.evaluate(from_const(56)), from_const(0));
-        assert_eq!(p.evaluate(from_const(78)), from_const(0));
-        assert_eq!(p.evaluate(from_const(90)), from_const(0));
-        assert_eq!(p.evaluate(from_const(13)), from_const(0));
-        assert_eq!(p.evaluate(from_const(57)), from_const(0));
-        assert_ne!(p.evaluate(from_const(92)), from_const(0));
-        assert_ne!(p.evaluate(from_const(46)), from_const(0));
-        assert_ne!(p.evaluate(from_const(80)), from_const(0));
+        assert_eq!(p.evaluate(gl4(12)), gl4(0));
+        assert_eq!(p.evaluate(gl4(34)), gl4(0));
+        assert_eq!(p.evaluate(gl4(56)), gl4(0));
+        assert_eq!(p.evaluate(gl4(78)), gl4(0));
+        assert_eq!(p.evaluate(gl4(90)), gl4(0));
+        assert_eq!(p.evaluate(gl4(13)), gl4(0));
+        assert_eq!(p.evaluate(gl4(57)), gl4(0));
+        assert_ne!(p.evaluate(gl4(92)), gl4(0));
+        assert_ne!(p.evaluate(gl4(46)), gl4(0));
+        assert_ne!(p.evaluate(gl4(80)), gl4(0));
     }
 
     #[test]
     fn test_seven_roots_reverse_order() {
         let p = from_roots(&[
-            from_const(57),
-            from_const(13),
-            from_const(90),
-            from_const(78),
-            from_const(56),
-            from_const(34),
-            from_const(12),
+            gl4(57),
+            gl4(13),
+            gl4(90),
+            gl4(78),
+            gl4(56),
+            gl4(34),
+            gl4(12),
         ]);
         assert_eq!(p.len(), 8);
         assert_eq!(p.degree_bound(), 8);
-        assert_eq!(p.evaluate(from_const(12)), from_const(0));
-        assert_eq!(p.evaluate(from_const(34)), from_const(0));
-        assert_eq!(p.evaluate(from_const(56)), from_const(0));
-        assert_eq!(p.evaluate(from_const(78)), from_const(0));
-        assert_eq!(p.evaluate(from_const(90)), from_const(0));
-        assert_eq!(p.evaluate(from_const(13)), from_const(0));
-        assert_eq!(p.evaluate(from_const(57)), from_const(0));
-        assert_ne!(p.evaluate(from_const(92)), from_const(0));
-        assert_ne!(p.evaluate(from_const(46)), from_const(0));
-        assert_ne!(p.evaluate(from_const(80)), from_const(0));
+        assert_eq!(p.evaluate(gl4(12)), gl4(0));
+        assert_eq!(p.evaluate(gl4(34)), gl4(0));
+        assert_eq!(p.evaluate(gl4(56)), gl4(0));
+        assert_eq!(p.evaluate(gl4(78)), gl4(0));
+        assert_eq!(p.evaluate(gl4(90)), gl4(0));
+        assert_eq!(p.evaluate(gl4(13)), gl4(0));
+        assert_eq!(p.evaluate(gl4(57)), gl4(0));
+        assert_ne!(p.evaluate(gl4(92)), gl4(0));
+        assert_ne!(p.evaluate(gl4(46)), gl4(0));
+        assert_ne!(p.evaluate(gl4(80)), gl4(0));
     }
 
     #[test]
     fn test_duplicate_roots() {
         assert!(
-            Polynomial::from_roots(
+            Polynomial::<GL4>::from_roots(
                 &[
-                    from_const(12),
-                    from_const(34),
-                    from_const(56),
-                    from_const(12),
-                    from_const(90),
-                    from_const(12),
-                    from_const(57),
+                    gl4(12),
+                    gl4(34),
+                    gl4(56),
+                    gl4(12),
+                    gl4(90),
+                    gl4(12),
+                    gl4(57),
                 ],
-                get_random_scalar()
+                GL4::random_default()
             )
             .is_err()
         );
@@ -1490,89 +1466,81 @@ mod tests {
 
     #[test]
     fn test_interpolate_zero_points() {
-        let p = Polynomial::interpolate(&[]).unwrap();
+        let p = Polynomial::<GL4>::interpolate(&[]).unwrap();
         assert_eq!(p, Polynomial::default());
     }
 
     #[test]
     fn test_interpolate_one_point1() {
-        let p = Polynomial::interpolate(&[(from_const(12), from_const(34))]).unwrap();
+        let p = Polynomial::<GL4>::interpolate(&[(gl4(12), gl4(34))]).unwrap();
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        assert_eq!(p.evaluate(from_const(12)), from_const(34));
+        assert_eq!(p.evaluate(gl4(12)), gl4(34));
     }
 
     #[test]
     fn test_interpolate_one_point2() {
-        let p = Polynomial::interpolate(&[(from_const(34), from_const(56))]).unwrap();
+        let p = Polynomial::<GL4>::interpolate(&[(gl4(34), gl4(56))]).unwrap();
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
-        assert_eq!(p.evaluate(from_const(34)), from_const(56));
+        assert_eq!(p.evaluate(gl4(34)), gl4(56));
     }
 
     #[test]
     fn test_interpolate_two_points1() {
-        let p = Polynomial::interpolate(&[
-            (from_const(12), from_const(34)),
-            (from_const(56), from_const(78)),
-        ])
-        .unwrap();
+        let p = Polynomial::<GL4>::interpolate(&[(gl4(12), gl4(34)), (gl4(56), gl4(78))]).unwrap();
         assert_eq!(p.len(), 2);
         assert_eq!(p.degree_bound(), 2);
-        assert_eq!(p.evaluate(from_const(12)), from_const(34));
-        assert_eq!(p.evaluate(from_const(56)), from_const(78));
+        assert_eq!(p.evaluate(gl4(12)), gl4(34));
+        assert_eq!(p.evaluate(gl4(56)), gl4(78));
     }
 
     #[test]
     fn test_interpolate_two_points2() {
-        let p = Polynomial::interpolate(&[
-            (from_const(34), from_const(12)),
-            (from_const(78), from_const(56)),
-        ])
-        .unwrap();
+        let p = Polynomial::<GL4>::interpolate(&[(gl4(34), gl4(12)), (gl4(78), gl4(56))]).unwrap();
         assert_eq!(p.len(), 2);
         assert_eq!(p.degree_bound(), 2);
-        assert_eq!(p.evaluate(from_const(34)), from_const(12));
-        assert_eq!(p.evaluate(from_const(78)), from_const(56));
+        assert_eq!(p.evaluate(gl4(34)), gl4(12));
+        assert_eq!(p.evaluate(gl4(78)), gl4(56));
     }
 
     #[test]
     fn test_interpolate_three_points1() {
-        let p = Polynomial::interpolate(&[
-            (from_const(12), from_const(34)),
-            (from_const(56), from_const(78)),
-            (from_const(90), from_const(12)),
+        let p = Polynomial::<GL4>::interpolate(&[
+            (gl4(12), gl4(34)),
+            (gl4(56), gl4(78)),
+            (gl4(90), gl4(12)),
         ])
         .unwrap();
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
-        assert_eq!(p.evaluate(from_const(12)), from_const(34));
-        assert_eq!(p.evaluate(from_const(56)), from_const(78));
-        assert_eq!(p.evaluate(from_const(90)), from_const(12));
+        assert_eq!(p.evaluate(gl4(12)), gl4(34));
+        assert_eq!(p.evaluate(gl4(56)), gl4(78));
+        assert_eq!(p.evaluate(gl4(90)), gl4(12));
     }
 
     #[test]
     fn test_interpolate_three_points2() {
-        let p = Polynomial::interpolate(&[
-            (from_const(34), from_const(12)),
-            (from_const(78), from_const(56)),
-            (from_const(12), from_const(90)),
+        let p = Polynomial::<GL4>::interpolate(&[
+            (gl4(34), gl4(12)),
+            (gl4(78), gl4(56)),
+            (gl4(12), gl4(90)),
         ])
         .unwrap();
         assert_eq!(p.len(), 3);
         assert_eq!(p.degree_bound(), 3);
-        assert_eq!(p.evaluate(from_const(34)), from_const(12));
-        assert_eq!(p.evaluate(from_const(78)), from_const(56));
-        assert_eq!(p.evaluate(from_const(12)), from_const(90));
+        assert_eq!(p.evaluate(gl4(34)), gl4(12));
+        assert_eq!(p.evaluate(gl4(78)), gl4(56));
+        assert_eq!(p.evaluate(gl4(12)), gl4(90));
     }
 
     #[test]
     fn test_duplicate_coordinates() {
         assert!(
-            Polynomial::interpolate(&[
-                (from_const(12), from_const(34)),
-                (from_const(56), from_const(78)),
-                (from_const(12), from_const(90)),
+            Polynomial::<GL4>::interpolate(&[
+                (gl4(12), gl4(34)),
+                (gl4(56), gl4(78)),
+                (gl4(12), gl4(90)),
             ])
             .is_err()
         );
@@ -1580,704 +1548,573 @@ mod tests {
 
     #[test]
     fn test_encode2_one_value_1() {
-        let p1 = Polynomial::encode2(vec![from_const(42)]);
-        let p2 = Polynomial::encode2(vec![from_const(42)]);
+        let p1 = Polynomial::<GL4>::encode2(vec![gl4(42)]);
+        let p2 = Polynomial::<GL4>::encode2(vec![gl4(42)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 1);
         assert_eq!(p1.degree_bound(), 1);
         assert_eq!(p2.len(), 1);
         assert_eq!(p2.degree_bound(), 1);
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(0, 1)),
-            from_const(42)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(0, 1).into()),
+            gl4(42)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 1), from_const(42));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 1), gl4(42));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 1)),
-            from_const(42)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 1).into()),
+            gl4(42)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 1), from_const(42));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 1), gl4(42));
     }
 
     #[test]
     fn test_encode2_one_value_2() {
-        let p1 = Polynomial::encode2(vec![from_const(42)]);
-        let p2 = Polynomial::encode2(vec![from_const(123)]);
+        let p1 = Polynomial::<GL4>::encode2(vec![gl4(42)]);
+        let p2 = Polynomial::<GL4>::encode2(vec![gl4(123)]);
         assert_eq!(p2.len(), 1);
         assert_eq!(p2.degree_bound(), 1);
         assert_ne!(p1, p2);
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 1)),
-            from_const(123)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 1).into()),
+            gl4(123)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 1), from_const(123));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 1), gl4(123));
     }
 
     #[test]
     fn test_encode2_two_values_1() {
-        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34)]);
-        let p2 = Polynomial::encode2(vec![from_const(12), from_const(34)]);
+        let p1 = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34)]);
+        let p2 = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 2);
         assert_eq!(p1.degree_bound(), 2);
         assert_eq!(p2.len(), 2);
         assert_eq!(p2.degree_bound(), 2);
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(0, 2)),
-            from_const(12)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(0, 2).into()),
+            gl4(12)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 2), from_const(12));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 2), gl4(12));
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(1, 2)),
-            from_const(34)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(1, 2).into()),
+            gl4(34)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(1, 2), from_const(34));
+        assert_eq!(p1.evaluate_on_two_adic_domain(1, 2), gl4(34));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 2)),
-            from_const(12)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 2).into()),
+            gl4(12)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), from_const(12));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), gl4(12));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(1, 2)),
-            from_const(34)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(1, 2).into()),
+            gl4(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), gl4(34));
     }
 
     #[test]
     fn test_encode2_two_values_2() {
-        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34)]);
-        let p2 = Polynomial::encode2(vec![from_const(78), from_const(56)]);
+        let p1 = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34)]);
+        let p2 = Polynomial::<GL4>::encode2(vec![gl4(78), gl4(56)]);
         assert_eq!(p1.len(), 2);
         assert_eq!(p1.degree_bound(), 2);
         assert_eq!(p2.len(), 2);
         assert_eq!(p2.degree_bound(), 2);
         assert_ne!(p1, p2);
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 2)),
-            from_const(78)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 2).into()),
+            gl4(78)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), from_const(78));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 2), gl4(78));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(1, 2)),
-            from_const(56)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(1, 2).into()),
+            gl4(56)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), from_const(56));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 2), gl4(56));
     }
 
     #[test]
     fn test_encode2_three_values_1() {
-        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
-        let p2 = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
+        let p1 = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34), gl4(56)]);
+        let p2 = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34), gl4(56)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 4);
         assert_eq!(p1.degree_bound(), 4);
         assert_eq!(p2.len(), 4);
         assert_eq!(p2.degree_bound(), 4);
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(0, 3)),
-            from_const(12)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(0, 3).into()),
+            gl4(12)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 3), from_const(12));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 3), gl4(12));
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(0, 4)),
-            from_const(12)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(0, 4).into()),
+            gl4(12)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(0, 4), from_const(12));
+        assert_eq!(p1.evaluate_on_two_adic_domain(0, 4), gl4(12));
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(1, 3)),
-            from_const(34)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(1, 3).into()),
+            gl4(34)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(1, 3), from_const(34));
+        assert_eq!(p1.evaluate_on_two_adic_domain(1, 3), gl4(34));
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(1, 4)),
-            from_const(34)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(1, 4).into()),
+            gl4(34)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(1, 4), from_const(34));
+        assert_eq!(p1.evaluate_on_two_adic_domain(1, 4), gl4(34));
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(2, 3)),
-            from_const(56)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(2, 3).into()),
+            gl4(56)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(2, 3), from_const(56));
+        assert_eq!(p1.evaluate_on_two_adic_domain(2, 3), gl4(56));
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(2, 4)),
-            from_const(56)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(2, 4).into()),
+            gl4(56)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(2, 4), from_const(56));
+        assert_eq!(p1.evaluate_on_two_adic_domain(2, 4), gl4(56));
         assert_eq!(
-            p1.evaluate(Polynomial::domain_element2(3, 4)),
-            from_const(0)
+            p1.evaluate(Polynomial::<GL4>::domain_element2(3, 4).into()),
+            gl4(0)
         );
-        assert_eq!(p1.evaluate_on_two_adic_domain(3, 4), from_const(0));
+        assert_eq!(p1.evaluate_on_two_adic_domain(3, 4), gl4(0));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 3)),
-            from_const(12)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 3).into()),
+            gl4(12)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), from_const(12));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), gl4(12));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 4)),
-            from_const(12)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 4).into()),
+            gl4(12)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), from_const(12));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), gl4(12));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(1, 3)),
-            from_const(34)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(1, 3).into()),
+            gl4(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), gl4(34));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(1, 4)),
-            from_const(34)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(1, 4).into()),
+            gl4(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), gl4(34));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(2, 3)),
-            from_const(56)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(2, 3).into()),
+            gl4(56)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), from_const(56));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), gl4(56));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(2, 4)),
-            from_const(56)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(2, 4).into()),
+            gl4(56)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), from_const(56));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), gl4(56));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(3, 4)),
-            from_const(0)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(3, 4).into()),
+            gl4(0)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), from_const(0));
+        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), gl4(0));
     }
 
     #[test]
     fn test_encode2_three_values_2() {
-        let p1 = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
-        let p2 = Polynomial::encode2(vec![from_const(90), from_const(78), from_const(34)]);
+        let p1 = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34), gl4(56)]);
+        let p2 = Polynomial::<GL4>::encode2(vec![gl4(90), gl4(78), gl4(34)]);
         assert_eq!(p1.len(), 4);
         assert_eq!(p1.degree_bound(), 4);
         assert_eq!(p2.len(), 4);
         assert_eq!(p2.degree_bound(), 4);
         assert_ne!(p1, p2);
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 3)),
-            from_const(90)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 3).into()),
+            gl4(90)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), from_const(90));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 3), gl4(90));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(0, 4)),
-            from_const(90)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(0, 4).into()),
+            gl4(90)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), from_const(90));
+        assert_eq!(p2.evaluate_on_two_adic_domain(0, 4), gl4(90));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(1, 3)),
-            from_const(78)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(1, 3).into()),
+            gl4(78)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), from_const(78));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 3), gl4(78));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(1, 4)),
-            from_const(78)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(1, 4).into()),
+            gl4(78)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), from_const(78));
+        assert_eq!(p2.evaluate_on_two_adic_domain(1, 4), gl4(78));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(2, 3)),
-            from_const(34)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(2, 3).into()),
+            gl4(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 3), gl4(34));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(2, 4)),
-            from_const(34)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(2, 4).into()),
+            gl4(34)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), from_const(34));
+        assert_eq!(p2.evaluate_on_two_adic_domain(2, 4), gl4(34));
         assert_eq!(
-            p2.evaluate(Polynomial::domain_element2(3, 4)),
-            from_const(0)
+            p2.evaluate(Polynomial::<GL4>::domain_element2(3, 4).into()),
+            gl4(0)
         );
-        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), from_const(0));
+        assert_eq!(p2.evaluate_on_two_adic_domain(3, 4), gl4(0));
     }
 
     #[test]
     fn test_encode2_four_values() {
-        let p = Polynomial::encode2(vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-        ]);
+        let p = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34), gl4(56), gl4(78)]);
         assert_eq!(p.len(), 4);
         assert_eq!(p.degree_bound(), 4);
         assert_eq!(
-            p.evaluate(Polynomial::domain_element2(0, 4)),
-            from_const(12)
+            p.evaluate(Polynomial::<GL4>::domain_element2(0, 4).into()),
+            gl4(12)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(0, 4), from_const(12));
+        assert_eq!(p.evaluate_on_two_adic_domain(0, 4), gl4(12));
         assert_eq!(
-            p.evaluate(Polynomial::domain_element2(1, 4)),
-            from_const(34)
+            p.evaluate(Polynomial::<GL4>::domain_element2(1, 4).into()),
+            gl4(34)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(1, 4), from_const(34));
+        assert_eq!(p.evaluate_on_two_adic_domain(1, 4), gl4(34));
         assert_eq!(
-            p.evaluate(Polynomial::domain_element2(2, 4)),
-            from_const(56)
+            p.evaluate(Polynomial::<GL4>::domain_element2(2, 4).into()),
+            gl4(56)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(2, 4), from_const(56));
+        assert_eq!(p.evaluate_on_two_adic_domain(2, 4), gl4(56));
         assert_eq!(
-            p.evaluate(Polynomial::domain_element2(3, 4)),
-            from_const(78)
+            p.evaluate(Polynomial::<GL4>::domain_element2(3, 4).into()),
+            gl4(78)
         );
-        assert_eq!(p.evaluate_on_two_adic_domain(3, 4), from_const(78));
+        assert_eq!(p.evaluate_on_two_adic_domain(3, 4), gl4(78));
     }
 
     #[test]
     fn test_decode2_one_value() {
-        let values = vec![from_const(42)];
-        let polynomial = Polynomial::encode2(values.clone());
+        let values = vec![gl4(42)];
+        let polynomial = Polynomial::<GL4>::encode2(values.clone());
         assert_eq!(polynomial.decode2(), values);
     }
 
     #[test]
     fn test_decode2_two_values() {
-        let values = vec![from_const(12), from_const(34)];
-        let polynomial = Polynomial::encode2(values.clone());
+        let values = vec![gl4(12), gl4(34)];
+        let polynomial = Polynomial::<GL4>::encode2(values.clone());
         assert_eq!(polynomial.decode2(), values);
     }
 
     #[test]
     fn test_decode2_three_values() {
-        let polynomial = Polynomial::encode2(vec![from_const(12), from_const(34), from_const(56)]);
+        let polynomial = Polynomial::<GL4>::encode2(vec![gl4(12), gl4(34), gl4(56)]);
         assert_eq!(
             polynomial.decode2(),
-            vec![
-                from_const(12),
-                from_const(34),
-                from_const(56),
-                from_const(0)
-            ]
+            vec![gl4(12), gl4(34), gl4(56), gl4(0)]
         );
     }
 
     #[test]
     fn test_decode2_four_values() {
-        let values = vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-        ];
-        let polynomial = Polynomial::encode2(values.clone());
+        let values = vec![gl4(12), gl4(34), gl4(56), gl4(78)];
+        let polynomial = Polynomial::<GL4>::encode2(values.clone());
         assert_eq!(polynomial.decode2(), values);
     }
 
     #[test]
     fn test_encode3_one_value_1() {
-        let p1 = Polynomial::encode3(vec![from_const(42)]);
-        let p2 = Polynomial::encode3(vec![from_const(42)]);
+        let p1 = Polynomial::<BS>::encode3(vec![bs(42)]);
+        let p2 = Polynomial::<BS>::encode3(vec![bs(42)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 1);
         assert_eq!(p1.degree_bound(), 1);
         assert_eq!(p2.len(), 1);
         assert_eq!(p2.degree_bound(), 1);
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(0, 1)),
-            from_const(42)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(0, 1), from_const(42));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(0, 1)),
-            from_const(42)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(0, 1), from_const(42));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(0, 1)), bs(42));
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 1), bs(42));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(0, 1)), bs(42));
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 1), bs(42));
     }
 
     #[test]
     fn test_encode3_one_value_2() {
-        let p1 = Polynomial::encode3(vec![from_const(42)]);
-        let p2 = Polynomial::encode3(vec![from_const(123)]);
+        let p1 = Polynomial::<BS>::encode3(vec![bs(42)]);
+        let p2 = Polynomial::<BS>::encode3(vec![bs(123)]);
         assert_eq!(p2.len(), 1);
         assert_eq!(p2.degree_bound(), 1);
         assert_ne!(p1, p2);
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(0, 1)),
-            from_const(123)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(0, 1), from_const(123));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(0, 1)), bs(123));
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 1), bs(123));
     }
 
     #[test]
     fn test_encode3_two_values_1() {
-        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34)]);
-        let p2 = Polynomial::encode3(vec![from_const(12), from_const(34)]);
+        let p1 = Polynomial::<BS>::encode3(vec![bs(12), bs(34)]);
+        let p2 = Polynomial::<BS>::encode3(vec![bs(12), bs(34)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
         assert_eq!(p2.len(), 3);
         assert_eq!(p2.degree_bound(), 3);
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(0, 2)),
-            from_const(12)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(0, 2), from_const(12));
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(0, 3)),
-            from_const(12)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(0, 3), from_const(12));
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(1, 2)),
-            from_const(34)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(1, 2), from_const(34));
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(1, 3)),
-            from_const(34)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(1, 3), from_const(34));
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(2, 3)),
-            from_const(0)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(2, 3), from_const(0));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(0, 2)),
-            from_const(12)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(0, 2), from_const(12));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(0, 3)),
-            from_const(12)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), from_const(12));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(1, 2)),
-            from_const(34)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(1, 2), from_const(34));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(1, 3)),
-            from_const(34)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), from_const(34));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(2, 3)),
-            from_const(0)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(0));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(0, 2)), bs(12));
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 2), bs(12));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(0, 3)), bs(12));
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 3), bs(12));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(1, 2)), bs(34));
+        assert_eq!(p1.evaluate_on_three_adic_domain(1, 2), bs(34));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(1, 3)), bs(34));
+        assert_eq!(p1.evaluate_on_three_adic_domain(1, 3), bs(34));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(2, 3)), bs(0));
+        assert_eq!(p1.evaluate_on_three_adic_domain(2, 3), bs(0));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(0, 2)), bs(12));
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 2), bs(12));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(0, 3)), bs(12));
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), bs(12));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(1, 2)), bs(34));
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 2), bs(34));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(1, 3)), bs(34));
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), bs(34));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(2, 3)), bs(0));
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), bs(0));
     }
 
     #[test]
     fn test_encode3_two_values_2() {
-        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34)]);
-        let p2 = Polynomial::encode3(vec![from_const(78), from_const(56)]);
+        let p1 = Polynomial::<BS>::encode3(vec![bs(12), bs(34)]);
+        let p2 = Polynomial::<BS>::encode3(vec![bs(78), bs(56)]);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
         assert_eq!(p2.len(), 3);
         assert_eq!(p2.degree_bound(), 3);
         assert_ne!(p1, p2);
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(0, 2)),
-            from_const(78)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(0, 2), from_const(78));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(1, 2)),
-            from_const(56)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(1, 2), from_const(56));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(2, 3)),
-            from_const(0)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(0));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(0, 2)), bs(78));
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 2), bs(78));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(1, 2)), bs(56));
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 2), bs(56));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(2, 3)), bs(0));
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), bs(0));
     }
 
     #[test]
     fn test_encode3_three_values_1() {
-        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34), from_const(56)]);
-        let p2 = Polynomial::encode3(vec![from_const(12), from_const(34), from_const(56)]);
+        let p1 = Polynomial::<BS>::encode3(vec![bs(12), bs(34), bs(56)]);
+        let p2 = Polynomial::<BS>::encode3(vec![bs(12), bs(34), bs(56)]);
         assert_eq!(p1, p2);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
         assert_eq!(p2.len(), 3);
         assert_eq!(p2.degree_bound(), 3);
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(0, 3)),
-            from_const(12)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(0, 3), from_const(12));
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(1, 3)),
-            from_const(34)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(1, 3), from_const(34));
-        assert_eq!(
-            p1.evaluate(Polynomial::domain_element3(2, 3)),
-            from_const(56)
-        );
-        assert_eq!(p1.evaluate_on_three_adic_domain(2, 3), from_const(56));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(0, 3)),
-            from_const(12)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), from_const(12));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(1, 3)),
-            from_const(34)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), from_const(34));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(2, 3)),
-            from_const(56)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(56));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(0, 3)), bs(12));
+        assert_eq!(p1.evaluate_on_three_adic_domain(0, 3), bs(12));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(1, 3)), bs(34));
+        assert_eq!(p1.evaluate_on_three_adic_domain(1, 3), bs(34));
+        assert_eq!(p1.evaluate(Polynomial::domain_element3(2, 3)), bs(56));
+        assert_eq!(p1.evaluate_on_three_adic_domain(2, 3), bs(56));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(0, 3)), bs(12));
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), bs(12));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(1, 3)), bs(34));
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), bs(34));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(2, 3)), bs(56));
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), bs(56));
     }
 
     #[test]
     fn test_encode3_three_values_2() {
-        let p1 = Polynomial::encode3(vec![from_const(12), from_const(34), from_const(56)]);
-        let p2 = Polynomial::encode3(vec![from_const(90), from_const(78), from_const(34)]);
+        let p1 = Polynomial::<BS>::encode3(vec![bs(12), bs(34), bs(56)]);
+        let p2 = Polynomial::<BS>::encode3(vec![bs(90), bs(78), bs(34)]);
         assert_eq!(p1.len(), 3);
         assert_eq!(p1.degree_bound(), 3);
         assert_eq!(p2.len(), 3);
         assert_eq!(p2.degree_bound(), 3);
         assert_ne!(p1, p2);
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(0, 3)),
-            from_const(90)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), from_const(90));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(1, 3)),
-            from_const(78)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), from_const(78));
-        assert_eq!(
-            p2.evaluate(Polynomial::domain_element3(2, 3)),
-            from_const(34)
-        );
-        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), from_const(34));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(0, 3)), bs(90));
+        assert_eq!(p2.evaluate_on_three_adic_domain(0, 3), bs(90));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(1, 3)), bs(78));
+        assert_eq!(p2.evaluate_on_three_adic_domain(1, 3), bs(78));
+        assert_eq!(p2.evaluate(Polynomial::domain_element3(2, 3)), bs(34));
+        assert_eq!(p2.evaluate_on_three_adic_domain(2, 3), bs(34));
     }
 
     #[test]
     fn test_encode3_nine_values3() {
-        let p = Polynomial::encode3(vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-            from_const(90),
-            from_const(11),
-            from_const(22),
-            from_const(33),
-            from_const(44),
+        let p = Polynomial::<BS>::encode3(vec![
+            bs(12),
+            bs(34),
+            bs(56),
+            bs(78),
+            bs(90),
+            bs(11),
+            bs(22),
+            bs(33),
+            bs(44),
         ]);
         assert_eq!(p.len(), 9);
         assert_eq!(p.degree_bound(), 9);
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(0, 9)),
-            from_const(12)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(0, 9), from_const(12));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(1, 9)),
-            from_const(34)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(1, 9), from_const(34));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(2, 9)),
-            from_const(56)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(2, 9), from_const(56));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(3, 9)),
-            from_const(78)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(3, 9), from_const(78));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(4, 9)),
-            from_const(90)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(4, 9), from_const(90));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(5, 9)),
-            from_const(11)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(5, 9), from_const(11));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(6, 9)),
-            from_const(22)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(6, 9), from_const(22));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(7, 9)),
-            from_const(33)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(7, 9), from_const(33));
-        assert_eq!(
-            p.evaluate(Polynomial::domain_element3(8, 9)),
-            from_const(44)
-        );
-        assert_eq!(p.evaluate_on_three_adic_domain(8, 9), from_const(44));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(0, 9)), bs(12));
+        assert_eq!(p.evaluate_on_three_adic_domain(0, 9), bs(12));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(1, 9)), bs(34));
+        assert_eq!(p.evaluate_on_three_adic_domain(1, 9), bs(34));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(2, 9)), bs(56));
+        assert_eq!(p.evaluate_on_three_adic_domain(2, 9), bs(56));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(3, 9)), bs(78));
+        assert_eq!(p.evaluate_on_three_adic_domain(3, 9), bs(78));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(4, 9)), bs(90));
+        assert_eq!(p.evaluate_on_three_adic_domain(4, 9), bs(90));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(5, 9)), bs(11));
+        assert_eq!(p.evaluate_on_three_adic_domain(5, 9), bs(11));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(6, 9)), bs(22));
+        assert_eq!(p.evaluate_on_three_adic_domain(6, 9), bs(22));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(7, 9)), bs(33));
+        assert_eq!(p.evaluate_on_three_adic_domain(7, 9), bs(33));
+        assert_eq!(p.evaluate(Polynomial::domain_element3(8, 9)), bs(44));
+        assert_eq!(p.evaluate_on_three_adic_domain(8, 9), bs(44));
     }
 
     #[test]
     fn test_decode3_one_value() {
-        let values = vec![from_const(42)];
-        let polynomial = Polynomial::encode3(values.clone());
+        let values = vec![bs(42)];
+        let polynomial = Polynomial::<BS>::encode3(values.clone());
         assert_eq!(polynomial.decode3(), values);
     }
 
     #[test]
     fn test_decode3_two_values() {
-        let values = vec![from_const(12), from_const(34)];
-        let polynomial = Polynomial::encode3(values.clone());
-        assert_eq!(
-            polynomial.decode3(),
-            vec![from_const(12), from_const(34), from_const(0)]
-        );
+        let values = vec![bs(12), bs(34)];
+        let polynomial = Polynomial::<BS>::encode3(values.clone());
+        assert_eq!(polynomial.decode3(), vec![bs(12), bs(34), bs(0)]);
     }
 
     #[test]
     fn test_decode3_three_values() {
-        let values = vec![from_const(12), from_const(34), from_const(56)];
-        let polynomial = Polynomial::encode3(values.clone());
+        let values = vec![bs(12), bs(34), bs(56)];
+        let polynomial = Polynomial::<BS>::encode3(values.clone());
         assert_eq!(polynomial.decode3(), values);
     }
 
     #[test]
     fn test_decode3_nine_values() {
         let values = vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-            from_const(90),
-            from_const(11),
-            from_const(22),
-            from_const(33),
-            from_const(44),
+            bs(12),
+            bs(34),
+            bs(56),
+            bs(78),
+            bs(90),
+            bs(11),
+            bs(22),
+            bs(33),
+            bs(44),
         ];
-        let polynomial = Polynomial::encode3(values.clone());
+        let polynomial = Polynomial::<BS>::encode3(values.clone());
         assert_eq!(polynomial.decode3(), values);
     }
 
     #[test]
     fn test_add_same_length() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         assert_eq!(
             p1 + p2,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(33)])
         );
     }
 
     #[test]
     fn test_add_lhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
         assert_eq!(
             p1 + p2,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(3)])
         );
     }
 
     #[test]
     fn test_add_rhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         assert_eq!(
             p1 + p2,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(30)])
         );
     }
 
     #[test]
     fn test_add_commutative() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         assert_eq!(p1.clone() + p2.clone(), p2 + p1);
     }
 
     #[test]
     fn test_add_ref_same_length() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         assert_eq!(
             p1 + &p2,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(33)])
         );
     }
 
     #[test]
     fn test_add_ref_lhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
         assert_eq!(
             p1 + &p2,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(3)])
         );
     }
 
     #[test]
     fn test_add_ref_rhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         assert_eq!(
             p1 + &p2,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(30)])
         );
     }
 
     #[test]
     fn test_add_ref_consistent_with_add() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         assert_eq!(p1.clone() + &p2, p1 + p2);
     }
 
     #[test]
     fn test_add_assign_same_length() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         p1 += p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(33)])
         );
     }
 
     #[test]
     fn test_add_assign_lhs_longer() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
         p1 += p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(3)])
         );
     }
 
     #[test]
     fn test_add_assign_rhs_longer() {
-        let mut p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         p1 += p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(30)])
         );
     }
 
     #[test]
     fn test_add_assign_consistent_with_add() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         let mut p1_assign = p1.clone();
         p1_assign += p2.clone();
         assert_eq!(p1_assign, p1 + p2);
@@ -2285,46 +2122,41 @@ mod tests {
 
     #[test]
     fn test_add_assign_ref_same_length() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         p1 += &p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(33)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(33)])
         );
     }
 
     #[test]
     fn test_add_assign_ref_lhs_longer() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
         p1 += &p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(3)])
         );
     }
 
     #[test]
     fn test_add_assign_ref_rhs_longer() {
-        let mut p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         p1 += &p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(11), from_const(22), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(11), gl4(22), gl4(30)])
         );
     }
 
     #[test]
     fn test_add_assign_ref_consistent_with_add_assign() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let p2 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
         let mut p1_assign_ref = p1.clone();
         p1_assign_ref += &p2;
         let mut p1_assign = p1;
@@ -2334,184 +2166,178 @@ mod tests {
 
     #[test]
     fn test_sum_empty() {
-        let polynomials: Vec<Polynomial> = vec![];
+        let polynomials: Vec<Polynomial<GL4>> = vec![];
         assert_eq!(
-            polynomials.into_iter().sum::<Polynomial>(),
+            polynomials.into_iter().sum::<Polynomial<GL4>>(),
             Polynomial::default()
         );
     }
 
     #[test]
     fn test_sum_one_polynomial() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        assert_eq!(vec![p.clone()].into_iter().sum::<Polynomial>(), p);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        assert_eq!(vec![p.clone()].into_iter().sum::<Polynomial<GL4>>(), p);
     }
 
     #[test]
     fn test_sum_several_polynomials() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p3 = Polynomial::with_coefficients(vec![from_const(100)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p3 = Polynomial::<GL4>::with_coefficients(vec![gl4(100)]);
         assert_eq!(
             vec![p1.clone(), p2.clone(), p3.clone()]
                 .into_iter()
-                .sum::<Polynomial>(),
+                .sum::<Polynomial<GL4>>(),
             p1 + p2 + p3
         );
     }
 
     #[test]
     fn test_sum_ref_empty() {
-        let polynomials: Vec<Polynomial> = vec![];
+        let polynomials: Vec<Polynomial<GL4>> = vec![];
         assert_eq!(
-            polynomials.iter().sum::<Polynomial>(),
+            polynomials.iter().sum::<Polynomial<GL4>>(),
             Polynomial::default()
         );
     }
 
     #[test]
     fn test_sum_ref_one_polynomial() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        assert_eq!([p.clone()].iter().sum::<Polynomial>(), p);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        assert_eq!([p.clone()].iter().sum::<Polynomial<GL4>>(), p);
     }
 
     #[test]
     fn test_sum_ref_several_polynomials() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p3 = Polynomial::with_coefficients(vec![from_const(100)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p3 = Polynomial::<GL4>::with_coefficients(vec![gl4(100)]);
         let polynomials = [p1.clone(), p2.clone(), p3.clone()];
-        assert_eq!(polynomials.iter().sum::<Polynomial>(), p1 + p2 + p3);
+        assert_eq!(polynomials.iter().sum::<Polynomial<GL4>>(), p1 + p2 + p3);
     }
 
     #[test]
     fn test_sum_ref_consistent_with_sum() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
         let polynomials = vec![p1, p2];
         assert_eq!(
-            polynomials.iter().sum::<Polynomial>(),
-            polynomials.into_iter().sum::<Polynomial>()
+            polynomials.iter().sum::<Polynomial<GL4>>(),
+            polynomials.into_iter().sum::<Polynomial<GL4>>()
         );
     }
 
     #[test]
     fn test_sub_same_length() {
-        let p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         assert_eq!(
             p1 - p2,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(27)])
         );
     }
 
     #[test]
     fn test_sub_lhs_longer() {
-        let p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
         assert_eq!(
             p1 - p2,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(30)])
         );
     }
 
     #[test]
     fn test_sub_rhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         assert_eq!(
             p1 - p2,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), -gl4(3)])
         );
     }
 
     #[test]
     fn test_sub_anticommutative() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         assert_eq!(p1.clone() - p2.clone(), -(p2 - p1));
     }
 
     #[test]
     fn test_sub_ref_same_length() {
-        let p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         assert_eq!(
             p1 - &p2,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(27)])
         );
     }
 
     #[test]
     fn test_sub_ref_lhs_longer() {
-        let p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
         assert_eq!(
             p1 - &p2,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(30)])
         );
     }
 
     #[test]
     fn test_sub_ref_rhs_longer() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         assert_eq!(
             p1 - &p2,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), -gl4(3)])
         );
     }
 
     #[test]
     fn test_sub_ref_consistent_with_sub() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         assert_eq!(p1.clone() - &p2, p1 - p2);
     }
 
     #[test]
     fn test_sub_assign_same_length() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         p1 -= p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(27)])
         );
     }
 
     #[test]
     fn test_sub_assign_lhs_longer() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
         p1 -= p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(30)])
         );
     }
 
     #[test]
     fn test_sub_assign_rhs_longer() {
-        let mut p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         p1 -= p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), -gl4(3)])
         );
     }
 
     #[test]
     fn test_sub_assign_consistent_with_sub() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         let mut p1_assign = p1.clone();
         p1_assign -= p2.clone();
         assert_eq!(p1_assign, p1 - p2);
@@ -2519,43 +2345,41 @@ mod tests {
 
     #[test]
     fn test_sub_assign_ref_same_length() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         p1 -= &p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(27)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(27)])
         );
     }
 
     #[test]
     fn test_sub_assign_ref_lhs_longer() {
-        let mut p1 =
-            Polynomial::with_coefficients(vec![from_const(10), from_const(20), from_const(30)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20), gl4(30)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
         p1 -= &p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), from_const(30)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), gl4(30)])
         );
     }
 
     #[test]
     fn test_sub_assign_ref_rhs_longer() {
-        let mut p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let mut p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         p1 -= &p2;
         assert_eq!(
             p1,
-            Polynomial::with_coefficients(vec![from_const(9), from_const(18), -from_const(3)])
+            Polynomial::with_coefficients(vec![gl4(9), gl4(18), -gl4(3)])
         );
     }
 
     #[test]
     fn test_sub_assign_ref_consistent_with_sub_assign() {
-        let p1 = Polynomial::with_coefficients(vec![from_const(10), from_const(20)]);
-        let p2 = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
+        let p1 = Polynomial::<GL4>::with_coefficients(vec![gl4(10), gl4(20)]);
+        let p2 = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
         let mut p1_assign_ref = p1.clone();
         p1_assign_ref -= &p2;
         let mut p1_assign = p1;
@@ -2565,16 +2389,16 @@ mod tests {
 
     #[test]
     fn test_multiply_empty() {
-        let p1 = Polynomial::default();
-        let p2 = Polynomial::default();
+        let p1 = Polynomial::<GL4>::default();
+        let p2 = Polynomial::<GL4>::default();
         assert_eq!(p1.multiply(p2), Polynomial::default());
     }
 
     #[test]
     fn test_multiply_empty_by_non_empty() {
-        let p1 = Polynomial::default();
+        let p1 = Polynomial::<GL4>::default();
         let p2 = Polynomial {
-            coefficients: vec![from_const(12), from_const(34)],
+            coefficients: vec![gl4(12), gl4(34)],
         };
         assert_eq!(p1.multiply(p2), Polynomial::default());
     }
@@ -2582,24 +2406,24 @@ mod tests {
     #[test]
     fn test_multiply_non_empty_by_empty() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(56), from_const(78)],
+            coefficients: vec![gl4(56), gl4(78)],
         };
-        let p2 = Polynomial::default();
+        let p2 = Polynomial::<GL4>::default();
         assert_eq!(p1.multiply(p2), Polynomial::default());
     }
 
     #[test]
     fn test_multiply_constant() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(3)],
+            coefficients: vec![gl4(3)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(12), from_const(34), from_const(56)],
+            coefficients: vec![gl4(12), gl4(34), gl4(56)],
         };
         assert_eq!(
             p1.multiply(p2),
             Polynomial {
-                coefficients: vec![from_const(36), from_const(102), from_const(168)]
+                coefficients: vec![gl4(36), gl4(102), gl4(168)]
             }
         );
     }
@@ -2607,15 +2431,15 @@ mod tests {
     #[test]
     fn test_multiply_by_constant() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(12), from_const(34), from_const(56)],
+            coefficients: vec![gl4(12), gl4(34), gl4(56)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3)],
+            coefficients: vec![gl4(3)],
         };
         assert_eq!(
             p1.multiply(p2),
             Polynomial {
-                coefficients: vec![from_const(36), from_const(102), from_const(168)]
+                coefficients: vec![gl4(36), gl4(102), gl4(168)]
             }
         );
     }
@@ -2623,15 +2447,15 @@ mod tests {
     #[test]
     fn test_multiply_constant_by_constant() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(12)],
+            coefficients: vec![gl4(12)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(34)],
+            coefficients: vec![gl4(34)],
         };
         assert_eq!(
             p1.multiply(p2),
             Polynomial {
-                coefficients: vec![from_const(408)]
+                coefficients: vec![gl4(408)]
             }
         );
     }
@@ -2639,13 +2463,13 @@ mod tests {
     #[test]
     fn test_multiply_polynomials1() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4)],
+            coefficients: vec![gl4(3), gl4(4)],
         };
         let result = Polynomial {
-            coefficients: vec![from_const(3), from_const(10), from_const(8)],
+            coefficients: vec![gl4(3), gl4(10), gl4(8)],
         };
         assert_eq!(p1.clone().multiply(p2.clone()), result);
         assert_eq!(p2.multiply(p1), result);
@@ -2654,18 +2478,13 @@ mod tests {
     #[test]
     fn test_multiply_polynomials2() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let result = Polynomial {
-            coefficients: vec![
-                from_const(3),
-                from_const(10),
-                from_const(13),
-                from_const(10),
-            ],
+            coefficients: vec![gl4(3), gl4(10), gl4(13), gl4(10)],
         };
         assert_eq!(p1.clone().multiply(p2.clone()), result);
         assert_eq!(p2.multiply(p1), result);
@@ -2674,18 +2493,13 @@ mod tests {
     #[test]
     fn test_polynomial_mul_op() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let result = Polynomial {
-            coefficients: vec![
-                from_const(3),
-                from_const(10),
-                from_const(13),
-                from_const(10),
-            ],
+            coefficients: vec![gl4(3), gl4(10), gl4(13), gl4(10)],
         };
         assert_eq!(p1.clone() * p2.clone(), result);
         assert_eq!(p2 * p1, result);
@@ -2694,18 +2508,13 @@ mod tests {
     #[test]
     fn test_polynomial_mul_ref_op() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let result = Polynomial {
-            coefficients: vec![
-                from_const(3),
-                from_const(10),
-                from_const(13),
-                from_const(10),
-            ],
+            coefficients: vec![gl4(3), gl4(10), gl4(13), gl4(10)],
         };
         assert_eq!(p1.clone() * &p2, result);
         assert_eq!(p2 * &p1, result);
@@ -2714,21 +2523,16 @@ mod tests {
     #[test]
     fn test_polynomial_mul_assign() {
         let mut p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         p1 *= p2;
         assert_eq!(
             p1,
             Polynomial {
-                coefficients: vec![
-                    from_const(3),
-                    from_const(10),
-                    from_const(13),
-                    from_const(10)
-                ],
+                coefficients: vec![gl4(3), gl4(10), gl4(13), gl4(10)],
             }
         );
     }
@@ -2736,21 +2540,16 @@ mod tests {
     #[test]
     fn test_polynomial_mul_assign_ref() {
         let mut p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         p1 *= &p2;
         assert_eq!(
             p1,
             Polynomial {
-                coefficients: vec![
-                    from_const(3),
-                    from_const(10),
-                    from_const(13),
-                    from_const(10)
-                ],
+                coefficients: vec![gl4(3), gl4(10), gl4(13), gl4(10)],
             }
         );
     }
@@ -2758,15 +2557,15 @@ mod tests {
     #[test]
     fn test_multiply_no_polynomials() {
         assert_eq!(
-            Polynomial::multiply_batch(&[]),
-            Polynomial::default() + Scalar::ONE
+            Polynomial::<GL4>::multiply_batch(&[]),
+            Polynomial::default() + GL4::ONE
         );
     }
 
     #[test]
     fn test_multiply_one_polynomial() {
         let p = Polynomial {
-            coefficients: vec![from_const(12), from_const(34)],
+            coefficients: vec![gl4(12), gl4(34)],
         };
         assert_eq!(Polynomial::multiply_batch(&[p.clone()]), p);
     }
@@ -2774,18 +2573,13 @@ mod tests {
     #[test]
     fn test_multiply_two_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let result = Polynomial {
-            coefficients: vec![
-                from_const(3),
-                from_const(10),
-                from_const(13),
-                from_const(10),
-            ],
+            coefficients: vec![gl4(3), gl4(10), gl4(13), gl4(10)],
         };
         assert_eq!(
             Polynomial::multiply_batch(&[p1.clone(), p2.clone()]),
@@ -2797,23 +2591,23 @@ mod tests {
     #[test]
     fn test_multiply_three_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let p3 = Polynomial {
-            coefficients: vec![from_const(6), from_const(7), from_const(8), from_const(9)],
+            coefficients: vec![gl4(6), gl4(7), gl4(8), gl4(9)],
         };
         let result = Polynomial {
             coefficients: vec![
-                from_const(18),
-                from_const(81),
-                from_const(172),
-                from_const(258),
-                from_const(264),
-                from_const(197),
-                from_const(90),
+                gl4(18),
+                gl4(81),
+                gl4(172),
+                gl4(258),
+                gl4(264),
+                gl4(197),
+                gl4(90),
             ],
         };
         assert_eq!(
@@ -2845,25 +2639,19 @@ mod tests {
     #[test]
     fn test_multiply_four_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4)],
+            coefficients: vec![gl4(3), gl4(4)],
         };
         let p3 = Polynomial {
-            coefficients: vec![from_const(5), from_const(6)],
+            coefficients: vec![gl4(5), gl4(6)],
         };
         let p4 = Polynomial {
-            coefficients: vec![from_const(7), from_const(8)],
+            coefficients: vec![gl4(7), gl4(8)],
         };
         let result = Polynomial {
-            coefficients: vec![
-                from_const(105),
-                from_const(596),
-                from_const(1244),
-                from_const(1136),
-                from_const(384),
-            ],
+            coefficients: vec![gl4(105), gl4(596), gl4(1244), gl4(1136), gl4(384)],
         };
         assert_eq!(
             Polynomial::multiply_batch(&[p1.clone(), p2.clone(), p3.clone(), p4.clone()]),
@@ -2886,9 +2674,9 @@ mod tests {
 
     #[test]
     fn test_product_empty() {
-        let polynomials: Vec<Polynomial> = vec![];
+        let polynomials: Vec<Polynomial<GL4>> = vec![];
         assert_eq!(
-            polynomials.into_iter().product::<Polynomial>(),
+            polynomials.into_iter().product::<Polynomial<GL4>>(),
             Polynomial::multiply_batch(&[])
         );
     }
@@ -2896,35 +2684,35 @@ mod tests {
     #[test]
     fn test_product_one_polynomial() {
         let p = Polynomial {
-            coefficients: vec![from_const(12), from_const(34)],
+            coefficients: vec![gl4(12), gl4(34)],
         };
-        assert_eq!(vec![p.clone()].into_iter().product::<Polynomial>(), p);
+        assert_eq!(vec![p.clone()].into_iter().product::<Polynomial<GL4>>(), p);
     }
 
     #[test]
     fn test_product_several_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let p3 = Polynomial {
-            coefficients: vec![from_const(6), from_const(7), from_const(8), from_const(9)],
+            coefficients: vec![gl4(6), gl4(7), gl4(8), gl4(9)],
         };
         assert_eq!(
             vec![p1.clone(), p2.clone(), p3.clone()]
                 .into_iter()
-                .product::<Polynomial>(),
+                .product::<Polynomial<GL4>>(),
             Polynomial::multiply_batch(&[p1, p2, p3])
         );
     }
 
     #[test]
     fn test_product_ref_empty() {
-        let polynomials: Vec<Polynomial> = vec![];
+        let polynomials: Vec<Polynomial<GL4>> = vec![];
         assert_eq!(
-            polynomials.iter().product::<Polynomial>(),
+            polynomials.iter().product::<Polynomial<GL4>>(),
             Polynomial::multiply_batch(&[])
         );
     }
@@ -2932,25 +2720,25 @@ mod tests {
     #[test]
     fn test_product_ref_one_polynomial() {
         let p = Polynomial {
-            coefficients: vec![from_const(12), from_const(34)],
+            coefficients: vec![gl4(12), gl4(34)],
         };
-        assert_eq!([p.clone()].iter().product::<Polynomial>(), p);
+        assert_eq!([p.clone()].iter().product::<Polynomial<GL4>>(), p);
     }
 
     #[test]
     fn test_product_ref_several_polynomials() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let p3 = Polynomial {
-            coefficients: vec![from_const(6), from_const(7), from_const(8), from_const(9)],
+            coefficients: vec![gl4(6), gl4(7), gl4(8), gl4(9)],
         };
         let polynomials = [p1.clone(), p2.clone(), p3.clone()];
         assert_eq!(
-            polynomials.iter().product::<Polynomial>(),
+            polynomials.iter().product::<Polynomial<GL4>>(),
             Polynomial::multiply_batch(&[p1, p2, p3])
         );
     }
@@ -2958,77 +2746,41 @@ mod tests {
     #[test]
     fn test_product_ref_consistent_with_product() {
         let p1 = Polynomial {
-            coefficients: vec![from_const(1), from_const(2)],
+            coefficients: vec![gl4(1), gl4(2)],
         };
         let p2 = Polynomial {
-            coefficients: vec![from_const(3), from_const(4), from_const(5)],
+            coefficients: vec![gl4(3), gl4(4), gl4(5)],
         };
         let polynomials = vec![p1, p2];
         assert_eq!(
-            polynomials.iter().product::<Polynomial>(),
-            polynomials.into_iter().product::<Polynomial>()
+            polynomials.iter().product::<Polynomial<GL4>>(),
+            polynomials.into_iter().product::<Polynomial<GL4>>()
         );
     }
 
     #[test]
     fn test_divide_zero_by_zero() {
         let z = Polynomial {
-            coefficients: vec![
-                -from_const(1),
-                from_const(0),
-                from_const(0),
-                from_const(0),
-                from_const(1),
-            ],
+            coefficients: vec![-gl4(1), gl4(0), gl4(0), gl4(0), gl4(1)],
         };
         assert_eq!(
             z.divide_by_zero(4).unwrap(),
             Polynomial {
-                coefficients: vec![from_const(1)]
+                coefficients: vec![gl4(1)]
             }
         );
     }
 
     #[test]
     fn test_non_trivial_quotient1() {
-        let ql = Polynomial::encode2(vec![
-            from_const(0),
-            from_const(0),
-            from_const(1),
-            from_const(1),
-        ]);
-        let qr = Polynomial::encode2(vec![
-            from_const(0),
-            from_const(0),
-            from_const(1),
-            from_const(1),
-        ]);
-        let qo = Polynomial::encode2(vec![-from_const(1); 4]);
-        let qm = Polynomial::encode2(vec![
-            from_const(1),
-            from_const(1),
-            from_const(0),
-            from_const(0),
-        ]);
-        let qc = Polynomial::encode2(vec![from_const(0); 4]);
-        let l = Polynomial::encode2(vec![
-            from_const(3),
-            from_const(9),
-            from_const(3),
-            from_const(30),
-        ]);
-        let r = Polynomial::encode2(vec![
-            from_const(3),
-            from_const(3),
-            from_const(27),
-            from_const(5),
-        ]);
-        let o = Polynomial::encode2(vec![
-            from_const(9),
-            from_const(27),
-            from_const(30),
-            from_const(35),
-        ]);
+        let ql = Polynomial::<GL4>::encode2(vec![gl4(0), gl4(0), gl4(1), gl4(1)]);
+        let qr = Polynomial::<GL4>::encode2(vec![gl4(0), gl4(0), gl4(1), gl4(1)]);
+        let qo = Polynomial::<GL4>::encode2(vec![-gl4(1); 4]);
+        let qm = Polynomial::<GL4>::encode2(vec![gl4(1), gl4(1), gl4(0), gl4(0)]);
+        let qc = Polynomial::<GL4>::encode2(vec![gl4(0); 4]);
+        let l = Polynomial::<GL4>::encode2(vec![gl4(3), gl4(9), gl4(3), gl4(30)]);
+        let r = Polynomial::<GL4>::encode2(vec![gl4(3), gl4(3), gl4(27), gl4(5)]);
+        let o = Polynomial::<GL4>::encode2(vec![gl4(9), gl4(27), gl4(30), gl4(35)]);
         let lr = l.clone().multiply(r.clone());
         let p = ql.multiply(l) + qr.multiply(r) + qo.multiply(o) + qm.multiply(lr) + qc;
         let q = p.divide_by_zero(4).unwrap();
@@ -3038,44 +2790,14 @@ mod tests {
 
     #[test]
     fn test_non_trivial_quotient2() {
-        let ql = Polynomial::encode2(vec![
-            from_const(0),
-            from_const(0),
-            from_const(1),
-            from_const(1),
-        ]);
-        let qr = Polynomial::encode2(vec![
-            from_const(0),
-            from_const(0),
-            from_const(1),
-            from_const(5),
-        ]);
-        let qo = Polynomial::encode2(vec![-from_const(1); 4]);
-        let qm = Polynomial::encode2(vec![
-            from_const(1),
-            from_const(1),
-            from_const(0),
-            from_const(0),
-        ]);
-        let qc = Polynomial::encode2(vec![from_const(0); 4]);
-        let l = Polynomial::encode2(vec![
-            from_const(3),
-            from_const(9),
-            from_const(3),
-            from_const(30),
-        ]);
-        let r = Polynomial::encode2(vec![
-            from_const(3),
-            from_const(3),
-            from_const(27),
-            from_const(1),
-        ]);
-        let o = Polynomial::encode2(vec![
-            from_const(9),
-            from_const(27),
-            from_const(30),
-            from_const(35),
-        ]);
+        let ql = Polynomial::<GL4>::encode2(vec![gl4(0), gl4(0), gl4(1), gl4(1)]);
+        let qr = Polynomial::<GL4>::encode2(vec![gl4(0), gl4(0), gl4(1), gl4(5)]);
+        let qo = Polynomial::<GL4>::encode2(vec![-gl4(1); 4]);
+        let qm = Polynomial::<GL4>::encode2(vec![gl4(1), gl4(1), gl4(0), gl4(0)]);
+        let qc = Polynomial::<GL4>::encode2(vec![gl4(0); 4]);
+        let l = Polynomial::<GL4>::encode2(vec![gl4(3), gl4(9), gl4(3), gl4(30)]);
+        let r = Polynomial::<GL4>::encode2(vec![gl4(3), gl4(3), gl4(27), gl4(1)]);
+        let o = Polynomial::<GL4>::encode2(vec![gl4(9), gl4(27), gl4(30), gl4(35)]);
         let lr = l.clone().multiply(r.clone());
         let p = ql.multiply(l) + qr.multiply(r) + qo.multiply(o) + qm.multiply(lr) + qc;
         let q = p.divide_by_zero(4).unwrap();
@@ -3085,14 +2807,11 @@ mod tests {
 
     #[test]
     fn test_shift_domain2_1() {
-        let values = vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-        ];
-        let p = Polynomial::encode2(values);
-        let shifted = p.clone().shift_domain_by(Scalar::MULTIPLICATIVE_GENERATOR);
+        let values = vec![gl4(12), gl4(34), gl4(56), gl4(78)];
+        let p = Polynomial::<GL4>::encode2(values);
+        let shifted = p
+            .clone()
+            .shift_domain_by(GL::MULTIPLICATIVE_GENERATOR.into());
         assert_eq!(
             shifted.evaluate_on_two_adic_domain(0, 4),
             p.evaluate_on_two_adic_coset(0, 4)
@@ -3113,13 +2832,8 @@ mod tests {
 
     #[test]
     fn test_shift_domain2_2() {
-        let values = vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-        ];
-        let p = Polynomial::encode2(values);
+        let values = vec![gl4(12), gl4(34), gl4(56), gl4(78)];
+        let p = Polynomial::<GL4>::encode2(values);
         let shifted = p.clone().shift_domain();
         assert_eq!(
             shifted.evaluate_on_two_adic_domain(0, 4),
@@ -3141,9 +2855,9 @@ mod tests {
 
     #[test]
     fn test_shift_domain3() {
-        let values = vec![from_const(12), from_const(34), from_const(56)];
-        let p = Polynomial::encode3(values);
-        let shifted = p.clone().shift_domain_by(Scalar::MULTIPLICATIVE_GENERATOR);
+        let values = vec![bs(12), bs(34), bs(56)];
+        let p = Polynomial::<BS>::encode3(values);
+        let shifted = p.clone().shift_domain_by(BS::MULTIPLICATIVE_GENERATOR);
         assert_eq!(
             shifted.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_coset(0, 3)
@@ -3160,13 +2874,8 @@ mod tests {
 
     #[test]
     fn test_lde2_blowup2() {
-        let values = vec![
-            from_const(12),
-            from_const(34),
-            from_const(56),
-            from_const(78),
-        ];
-        let p = Polynomial::encode2(values);
+        let values = vec![gl4(12), gl4(34), gl4(56), gl4(78)];
+        let p = Polynomial::<GL4>::encode2(values);
         let lde = p.clone().lde2(8);
         assert_eq!(
             lde,
@@ -3185,8 +2894,8 @@ mod tests {
 
     #[test]
     fn test_lde2_blowup4() {
-        let values = vec![from_const(1), from_const(2), from_const(3), from_const(4)];
-        let p = Polynomial::encode2(values);
+        let values = vec![gl4(1), gl4(2), gl4(3), gl4(4)];
+        let p = Polynomial::<GL4>::encode2(values);
         let lde = p.clone().lde2(16);
         assert_eq!(
             lde,
@@ -3213,8 +2922,8 @@ mod tests {
 
     #[test]
     fn test_lde2_shorter_polynomial() {
-        let values = vec![from_const(42), from_const(42)];
-        let p = Polynomial::encode2(values);
+        let values = vec![gl4(42), gl4(42)];
+        let p = Polynomial::<GL4>::encode2(values);
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
         let lde = p.clone().lde2(4);
@@ -3231,8 +2940,8 @@ mod tests {
 
     #[test]
     fn test_lde3_blowup3() {
-        let values = vec![from_const(12), from_const(34), from_const(56)];
-        let p = Polynomial::encode3(values);
+        let values = vec![bs(12), bs(34), bs(56)];
+        let p = Polynomial::<BS>::encode3(values);
         let lde = p.clone().lde3(9);
         assert_eq!(
             lde,
@@ -3252,8 +2961,8 @@ mod tests {
 
     #[test]
     fn test_lde3_blowup9() {
-        let values = vec![from_const(1), from_const(2), from_const(3)];
-        let p = Polynomial::encode3(values);
+        let values = vec![bs(1), bs(2), bs(3)];
+        let p = Polynomial::<BS>::encode3(values);
         let lde = p.clone().lde3(27);
         assert_eq!(
             lde,
@@ -3291,8 +3000,8 @@ mod tests {
 
     #[test]
     fn test_lde3_nine_values_blowup3() {
-        let values = (1u64..=9).map(Scalar::from).collect();
-        let p = Polynomial::encode3(values);
+        let values = (1u64..=9).map(BS::from).collect();
+        let p = Polynomial::<BS>::encode3(values);
         let lde = p.clone().lde3(27);
         assert_eq!(
             lde,
@@ -3330,8 +3039,8 @@ mod tests {
 
     #[test]
     fn test_lde3_shorter_poly() {
-        let values = vec![from_const(7), from_const(7), from_const(7)];
-        let p = Polynomial::encode3(values);
+        let values = vec![bs(7), bs(7), bs(7)];
+        let p = Polynomial::<BS>::encode3(values);
         assert_eq!(p.len(), 1);
         assert_eq!(p.degree_bound(), 1);
         let lde = p.clone().lde3(9);
@@ -3353,121 +3062,80 @@ mod tests {
 
     #[test]
     fn test_fold2_degree_zero() {
-        let p = Polynomial::with_coefficients(vec![from_const(5)]);
-        assert_eq!(p.clone().fold2(from_const(2)).take(), vec![from_const(5)]);
-        assert_eq!(p.fold2(from_const(3)).take(), vec![from_const(5)]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(5)]);
+        assert_eq!(p.clone().fold2(gl4(2)).take(), vec![gl4(5)]);
+        assert_eq!(p.fold2(gl4(3)).take(), vec![gl4(5)]);
     }
 
     #[test]
     fn test_fold2_degree_one() {
-        let p = Polynomial::with_coefficients(vec![from_const(2), from_const(3)]);
-        assert_eq!(p.clone().fold2(from_const(2)).take(), vec![from_const(8)]);
-        assert_eq!(p.fold2(from_const(3)).take(), vec![from_const(11)]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(2), gl4(3)]);
+        assert_eq!(p.clone().fold2(gl4(2)).take(), vec![gl4(8)]);
+        assert_eq!(p.fold2(gl4(3)).take(), vec![gl4(11)]);
     }
 
     #[test]
     fn test_fold2_degree_two() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        assert_eq!(
-            p.clone().fold2(from_const(2)).take(),
-            vec![from_const(5), from_const(3)],
-        );
-        assert_eq!(
-            p.fold2(from_const(3)).take(),
-            vec![from_const(7), from_const(3)],
-        );
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3)]);
+        assert_eq!(p.clone().fold2(gl4(2)).take(), vec![gl4(5), gl4(3)],);
+        assert_eq!(p.fold2(gl4(3)).take(), vec![gl4(7), gl4(3)],);
     }
 
     #[test]
     fn test_fold2_degree_three() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(1),
-            from_const(2),
-            from_const(3),
-            from_const(4),
-        ]);
-        assert_eq!(
-            p.clone().fold2(from_const(2)).take(),
-            vec![from_const(5), from_const(11)],
-        );
-        assert_eq!(
-            p.fold2(from_const(3)).take(),
-            vec![from_const(7), from_const(15)],
-        );
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3), gl4(4)]);
+        assert_eq!(p.clone().fold2(gl4(2)).take(), vec![gl4(5), gl4(11)],);
+        assert_eq!(p.fold2(gl4(3)).take(), vec![gl4(7), gl4(15)],);
     }
 
     #[test]
     fn test_fold3_degree_zero() {
-        let p = Polynomial::with_coefficients(vec![from_const(5)]);
-        assert_eq!(p.clone().fold3(from_const(2)).take(), vec![from_const(5)]);
-        assert_eq!(p.fold3(from_const(3)).take(), vec![from_const(5)]);
+        let p = Polynomial::<BS>::with_coefficients(vec![bs(5)]);
+        assert_eq!(p.clone().fold3(bs(2)).take(), vec![bs(5)]);
+        assert_eq!(p.fold3(bs(3)).take(), vec![bs(5)]);
     }
 
     #[test]
     fn test_fold3_degree_two() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        assert_eq!(p.clone().fold3(from_const(2)).take(), vec![from_const(17)]);
-        assert_eq!(p.fold3(from_const(3)).take(), vec![from_const(34)]);
+        let p = Polynomial::<BS>::with_coefficients(vec![bs(1), bs(2), bs(3)]);
+        assert_eq!(p.clone().fold3(bs(2)).take(), vec![bs(17)]);
+        assert_eq!(p.fold3(bs(3)).take(), vec![bs(34)]);
     }
 
     #[test]
     fn test_fold3_degree_three() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(1),
-            from_const(2),
-            from_const(3),
-            from_const(4),
-        ]);
-        assert_eq!(
-            p.clone().fold3(from_const(2)).take(),
-            vec![from_const(17), from_const(4)],
-        );
-        assert_eq!(
-            p.fold3(from_const(3)).take(),
-            vec![from_const(34), from_const(4)],
-        );
+        let p = Polynomial::<BS>::with_coefficients(vec![bs(1), bs(2), bs(3), bs(4)]);
+        assert_eq!(p.clone().fold3(bs(2)).take(), vec![bs(17), bs(4)],);
+        assert_eq!(p.fold3(bs(3)).take(), vec![bs(34), bs(4)],);
     }
 
     #[test]
     fn test_fold3_degree_five() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(1),
-            from_const(2),
-            from_const(3),
-            from_const(4),
-            from_const(5),
-            from_const(6),
-        ]);
-        assert_eq!(
-            p.clone().fold3(from_const(2)).take(),
-            vec![from_const(17), from_const(38)],
-        );
-        assert_eq!(
-            p.fold3(from_const(3)).take(),
-            vec![from_const(34), from_const(73)],
-        );
+        let p = Polynomial::<BS>::with_coefficients(vec![bs(1), bs(2), bs(3), bs(4), bs(5), bs(6)]);
+        assert_eq!(p.clone().fold3(bs(2)).take(), vec![bs(17), bs(38)],);
+        assert_eq!(p.fold3(bs(3)).take(), vec![bs(34), bs(73)],);
     }
 
     #[test]
     fn test_multiply_values2_same_constant() {
-        let lhs = vec![from_const(42), from_const(42)];
-        let rhs = vec![from_const(42), from_const(42)];
-        let result = Polynomial::multiply_values2(lhs, rhs);
-        assert_eq!(result, vec![from_const(1764)]);
+        let lhs = vec![gl4(42), gl4(42)];
+        let rhs = vec![gl4(42), gl4(42)];
+        let result = Polynomial::<GL4>::multiply_values2(lhs, rhs);
+        assert_eq!(result, vec![gl4(1764)]);
     }
 
     #[test]
     fn test_multiply_values2_different_constants() {
-        let lhs = vec![from_const(3), from_const(3)];
-        let rhs = vec![from_const(7), from_const(7)];
-        let result = Polynomial::multiply_values2(lhs, rhs);
-        assert_eq!(result, vec![from_const(21)]);
+        let lhs = vec![gl4(3), gl4(3)];
+        let rhs = vec![gl4(7), gl4(7)];
+        let result = Polynomial::<GL4>::multiply_values2(lhs, rhs);
+        assert_eq!(result, vec![gl4(21)]);
     }
 
     #[test]
     fn test_multiply_values2_two_linear_polynomials() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let q = Polynomial::<GL4>::with_coefficients(vec![gl4(3), gl4(4)]);
         let lhs = vec![
             p.evaluate_on_two_adic_domain(0, 2),
             p.evaluate_on_two_adic_domain(1, 2),
@@ -3477,7 +3145,7 @@ mod tests {
             q.evaluate_on_two_adic_domain(1, 2),
         ];
         let product = p.multiply(q);
-        let result = Polynomial::multiply_values2(lhs, rhs);
+        let result = Polynomial::<GL4>::multiply_values2(lhs, rhs);
         assert_eq!(
             result,
             vec![
@@ -3491,18 +3159,8 @@ mod tests {
 
     #[test]
     fn test_multiply_values2_four_values() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(1),
-            from_const(2),
-            from_const(3),
-            from_const(4),
-        ]);
-        let q = Polynomial::with_coefficients(vec![
-            from_const(5),
-            from_const(6),
-            from_const(7),
-            from_const(8),
-        ]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3), gl4(4)]);
+        let q = Polynomial::<GL4>::with_coefficients(vec![gl4(5), gl4(6), gl4(7), gl4(8)]);
         let lhs = vec![
             p.evaluate_on_two_adic_domain(0, 4),
             p.evaluate_on_two_adic_domain(1, 4),
@@ -3516,7 +3174,7 @@ mod tests {
             q.evaluate_on_two_adic_domain(3, 4),
         ];
         let product = p.multiply(q);
-        let result = Polynomial::multiply_values2(lhs, rhs);
+        let result = Polynomial::<GL4>::multiply_values2(lhs, rhs);
         assert_eq!(
             result,
             vec![
@@ -3534,8 +3192,8 @@ mod tests {
 
     #[test]
     fn test_multiply_values2_commutative() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2)]);
+        let q = Polynomial::<GL4>::with_coefficients(vec![gl4(3), gl4(4)]);
         let values_p = vec![
             p.evaluate_on_two_adic_domain(0, 2),
             p.evaluate_on_two_adic_domain(1, 2),
@@ -3544,25 +3202,15 @@ mod tests {
             q.evaluate_on_two_adic_domain(0, 2),
             q.evaluate_on_two_adic_domain(1, 2),
         ];
-        let result_pq = Polynomial::multiply_values2(values_p.clone(), values_q.clone());
-        let result_qp = Polynomial::multiply_values2(values_q, values_p);
+        let result_pq = Polynomial::<GL4>::multiply_values2(values_p.clone(), values_q.clone());
+        let result_qp = Polynomial::<GL4>::multiply_values2(values_q, values_p);
         assert_eq!(result_pq, result_qp);
     }
 
     #[test]
     fn test_multiply_values2_round_trip() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(1),
-            from_const(2),
-            from_const(3),
-            from_const(4),
-        ]);
-        let q = Polynomial::with_coefficients(vec![
-            from_const(5),
-            from_const(6),
-            from_const(7),
-            from_const(8),
-        ]);
+        let p = Polynomial::<GL4>::with_coefficients(vec![gl4(1), gl4(2), gl4(3), gl4(4)]);
+        let q = Polynomial::<GL4>::with_coefficients(vec![gl4(5), gl4(6), gl4(7), gl4(8)]);
         let lhs = vec![
             p.evaluate_on_two_adic_domain(0, 4),
             p.evaluate_on_two_adic_domain(1, 4),
@@ -3576,30 +3224,30 @@ mod tests {
             q.evaluate_on_two_adic_domain(3, 4),
         ];
         let product = p.clone().multiply(q.clone());
-        let result = Polynomial::encode2(Polynomial::multiply_values2(lhs, rhs));
+        let result = Polynomial::<GL4>::encode2(Polynomial::multiply_values2(lhs, rhs));
         assert_eq!(result, product);
     }
 
     #[test]
     fn test_multiply_values3_same_constant() {
-        let lhs = vec![from_const(42), from_const(42), from_const(42)];
-        let rhs = vec![from_const(42), from_const(42), from_const(42)];
-        let result = Polynomial::multiply_values3(lhs, rhs);
-        assert_eq!(result, vec![from_const(1764)]);
+        let lhs = vec![bs(42), bs(42), bs(42)];
+        let rhs = vec![bs(42), bs(42), bs(42)];
+        let result = Polynomial::<BS>::multiply_values3(lhs, rhs);
+        assert_eq!(result, vec![bs(1764)]);
     }
 
     #[test]
     fn test_multiply_values3_different_constants() {
-        let lhs = vec![from_const(3), from_const(3), from_const(3)];
-        let rhs = vec![from_const(7), from_const(7), from_const(7)];
-        let result = Polynomial::multiply_values3(lhs, rhs);
-        assert_eq!(result, vec![from_const(21)]);
+        let lhs = vec![bs(3), bs(3), bs(3)];
+        let rhs = vec![bs(7), bs(7), bs(7)];
+        let result = Polynomial::<BS>::multiply_values3(lhs, rhs);
+        assert_eq!(result, vec![bs(21)]);
     }
 
     #[test]
     fn test_multiply_values3_two_linear_polynomials() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
+        let p = Polynomial::<BS>::with_coefficients(vec![bs(1), bs(2)]);
+        let q = Polynomial::<BS>::with_coefficients(vec![bs(3), bs(4)]);
         let lhs = vec![
             p.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_domain(1, 3),
@@ -3611,7 +3259,7 @@ mod tests {
             q.evaluate_on_three_adic_domain(2, 3),
         ];
         let product = p.multiply(q);
-        let result = Polynomial::multiply_values3(lhs, rhs);
+        let result = Polynomial::<BS>::multiply_values3(lhs, rhs);
         assert_eq!(
             result,
             vec![
@@ -3624,27 +3272,27 @@ mod tests {
 
     #[test]
     fn test_multiply_values3_nine_values() {
-        let p = Polynomial::with_coefficients(vec![
-            from_const(1),
-            from_const(2),
-            from_const(3),
-            from_const(4),
-            from_const(5),
-            from_const(6),
-            from_const(7),
-            from_const(8),
-            from_const(9),
+        let p = Polynomial::<BS>::with_coefficients(vec![
+            bs(1),
+            bs(2),
+            bs(3),
+            bs(4),
+            bs(5),
+            bs(6),
+            bs(7),
+            bs(8),
+            bs(9),
         ]);
-        let q = Polynomial::with_coefficients(vec![
-            from_const(10),
-            from_const(11),
-            from_const(12),
-            from_const(13),
-            from_const(14),
-            from_const(15),
-            from_const(16),
-            from_const(17),
-            from_const(18),
+        let q = Polynomial::<BS>::with_coefficients(vec![
+            bs(10),
+            bs(11),
+            bs(12),
+            bs(13),
+            bs(14),
+            bs(15),
+            bs(16),
+            bs(17),
+            bs(18),
         ]);
         let lhs = vec![
             p.evaluate_on_three_adic_domain(0, 9),
@@ -3669,7 +3317,7 @@ mod tests {
             q.evaluate_on_three_adic_domain(8, 9),
         ];
         let product = p.multiply(q);
-        let result = Polynomial::multiply_values3(lhs, rhs);
+        let result = Polynomial::<BS>::multiply_values3(lhs, rhs);
         assert_eq!(
             result,
             vec![
@@ -3706,8 +3354,8 @@ mod tests {
 
     #[test]
     fn test_multiply_values3_commutative() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2)]);
-        let q = Polynomial::with_coefficients(vec![from_const(3), from_const(4)]);
+        let p = Polynomial::<BS>::with_coefficients(vec![bs(1), bs(2)]);
+        let q = Polynomial::<BS>::with_coefficients(vec![bs(3), bs(4)]);
         let values_p = vec![
             p.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_domain(1, 3),
@@ -3718,15 +3366,15 @@ mod tests {
             q.evaluate_on_three_adic_domain(1, 3),
             q.evaluate_on_three_adic_domain(2, 3),
         ];
-        let result_pq = Polynomial::multiply_values3(values_p.clone(), values_q.clone());
-        let result_qp = Polynomial::multiply_values3(values_q, values_p);
+        let result_pq = Polynomial::<BS>::multiply_values3(values_p.clone(), values_q.clone());
+        let result_qp = Polynomial::<BS>::multiply_values3(values_q, values_p);
         assert_eq!(result_pq, result_qp);
     }
 
     #[test]
     fn test_multiply_values3_round_trip() {
-        let p = Polynomial::with_coefficients(vec![from_const(1), from_const(2), from_const(3)]);
-        let q = Polynomial::with_coefficients(vec![from_const(4), from_const(5), from_const(6)]);
+        let p = Polynomial::<BS>::with_coefficients(vec![bs(1), bs(2), bs(3)]);
+        let q = Polynomial::<BS>::with_coefficients(vec![bs(4), bs(5), bs(6)]);
         let lhs = vec![
             p.evaluate_on_three_adic_domain(0, 3),
             p.evaluate_on_three_adic_domain(1, 3),
@@ -3738,82 +3386,82 @@ mod tests {
             q.evaluate_on_three_adic_domain(2, 3),
         ];
         let product = p.clone().multiply(q.clone());
-        let result = Polynomial::encode3(Polynomial::multiply_values3(lhs, rhs));
+        let result = Polynomial::<BS>::encode3(Polynomial::multiply_values3(lhs, rhs));
         assert_eq!(result, product);
     }
 
     #[test]
     fn test_lagrange0_two_adic_1() {
         let n = 1;
-        let l0 = Polynomial::lagrange0_2(n);
-        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+        let l0 = Polynomial::<GL4>::lagrange0_2(n);
+        assert_eq!(l0.evaluate(gl4(1)), gl4(1));
     }
 
     #[test]
     fn test_lagrange0_two_adic_2() {
         let n = 2;
-        let omega = Polynomial::domain_element2(1, n);
-        let l0 = Polynomial::lagrange0_2(n);
-        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
-        assert_eq!(l0.evaluate(omega), from_const(0));
+        let omega: GL4 = Polynomial::<GL4>::domain_element2(1, n).into();
+        let l0 = Polynomial::<GL4>::lagrange0_2(n);
+        assert_eq!(l0.evaluate(gl4(1)), gl4(1));
+        assert_eq!(l0.evaluate(omega), gl4(0));
     }
 
     #[test]
     fn test_lagrange0_two_adic_4() {
         let n = 4;
-        let omega = Polynomial::domain_element2(1, n);
-        let l0 = Polynomial::lagrange0_2(n);
-        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
-        assert_eq!(l0.evaluate(omega), from_const(0));
-        assert_eq!(l0.evaluate(omega.square()), from_const(0));
-        assert_eq!(l0.evaluate(omega.cube()), from_const(0));
+        let omega: GL4 = Polynomial::<GL4>::domain_element2(1, n).into();
+        let l0 = Polynomial::<GL4>::lagrange0_2(n);
+        assert_eq!(l0.evaluate(gl4(1)), gl4(1));
+        assert_eq!(l0.evaluate(omega), gl4(0));
+        assert_eq!(l0.evaluate(omega.square()), gl4(0));
+        assert_eq!(l0.evaluate(omega.cube()), gl4(0));
     }
 
     #[test]
     fn test_lagrange0_two_adic_8() {
         let n = 8;
-        let omega = Polynomial::domain_element2(1, n);
-        let l0 = Polynomial::lagrange0_2(n);
-        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
-        assert_eq!(l0.evaluate(omega), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(2)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(3)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(4)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(5)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(6)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(7)), from_const(0));
+        let omega:GL4 = Polynomial::<GL4>::domain_element2(1, n).into();
+        let l0 = Polynomial::<GL4>::lagrange0_2(n);
+        assert_eq!(l0.evaluate(gl4(1)), gl4(1));
+        assert_eq!(l0.evaluate(omega), gl4(0));
+        assert_eq!(l0.evaluate(omega.pow_small(2)), gl4(0));
+        assert_eq!(l0.evaluate(omega.pow_small(3)), gl4(0));
+        assert_eq!(l0.evaluate(omega.pow_small(4)), gl4(0));
+        assert_eq!(l0.evaluate(omega.pow_small(5)), gl4(0));
+        assert_eq!(l0.evaluate(omega.pow_small(6)), gl4(0));
+        assert_eq!(l0.evaluate(omega.pow_small(7)), gl4(0));
     }
 
     #[test]
     fn test_lagrange0_three_adic_1() {
         let n = 1;
-        let l0 = Polynomial::lagrange0_3(n);
-        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
+        let l0 = Polynomial::<BS>::lagrange0_3(n);
+        assert_eq!(l0.evaluate(bs(1)), bs(1));
     }
 
     #[test]
     fn test_lagrange0_three_adic_3() {
         let n = 3;
-        let omega = Polynomial::domain_element3(1, n);
-        let l0 = Polynomial::lagrange0_3(n);
-        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
-        assert_eq!(l0.evaluate(omega), from_const(0));
-        assert_eq!(l0.evaluate(omega.square()), from_const(0));
+        let omega = Polynomial::<BS>::domain_element3(1, n);
+        let l0 = Polynomial::<BS>::lagrange0_3(n);
+        assert_eq!(l0.evaluate(bs(1)), bs(1));
+        assert_eq!(l0.evaluate(omega), bs(0));
+        assert_eq!(l0.evaluate(omega.square()), bs(0));
     }
 
     #[test]
     fn test_lagrange0_three_adic_9() {
         let n = 9;
-        let omega = Polynomial::domain_element3(1, n);
-        let l0 = Polynomial::lagrange0_3(n);
-        assert_eq!(l0.evaluate(from_const(1)), from_const(1));
-        assert_eq!(l0.evaluate(omega), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(2)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(3)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(4)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(5)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(6)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(7)), from_const(0));
-        assert_eq!(l0.evaluate(omega.pow_small(8)), from_const(0));
+        let omega = Polynomial::<BS>::domain_element3(1, n);
+        let l0 = Polynomial::<BS>::lagrange0_3(n);
+        assert_eq!(l0.evaluate(bs(1)), bs(1));
+        assert_eq!(l0.evaluate(omega), bs(0));
+        assert_eq!(l0.evaluate(omega.pow_small(2)), bs(0));
+        assert_eq!(l0.evaluate(omega.pow_small(3)), bs(0));
+        assert_eq!(l0.evaluate(omega.pow_small(4)), bs(0));
+        assert_eq!(l0.evaluate(omega.pow_small(5)), bs(0));
+        assert_eq!(l0.evaluate(omega.pow_small(6)), bs(0));
+        assert_eq!(l0.evaluate(omega.pow_small(7)), bs(0));
+        assert_eq!(l0.evaluate(omega.pow_small(8)), bs(0));
     }
 }
